@@ -66,7 +66,7 @@ final class AppEnvironment: ObservableObject {
         // live — see the picker's UI copy.
         let archiveToolAccess = Self.resolveArchiveToolAccess(writer: database.writer)
         self.archiveToolAccess = archiveToolAccess
-        let externalArchiveToolURL = archiveToolAccess?.url
+        let externalArchiveToolDirectory = archiveToolAccess?.url
 
         // IngestJobHandler (and ArchiveReviewService.confirm, below) need a JobEnqueuer
         // to dispatch a follow-up job — but that enqueuer *is* the JobQueue being
@@ -74,26 +74,28 @@ final class AppEnvironment: ObservableObject {
         // DeferredJobEnqueuer breaks the cycle: build handlers/services against it,
         // construct the queue, then attach.
         let deferredEnqueuer = DeferredJobEnqueuer()
-        self.archiveReview = ArchiveReviewService(writer: database.writer, enqueuer: deferredEnqueuer)
+        self.archiveReview = ArchiveReviewService(
+            writer: database.writer, enqueuer: deferredEnqueuer, externalArchiveToolDirectory: externalArchiveToolDirectory
+        )
 
         let handlers = JobHandlers(
             ingest: IngestJobHandler(writer: database.writer, enqueuer: deferredEnqueuer),
             render: RenderJobHandler(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory),
             renderStep: StepTessellationJobHandler(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory),
             rescan: NoOpJobHandler(),
-            extractZip: ExtractZipJobHandler(writer: database.writer, externalToolURL: externalArchiveToolURL)
+            extractZip: ExtractZipJobHandler(writer: database.writer, externalToolDirectory: externalArchiveToolDirectory)
         )
         let jobQueue = JobQueue(writer: database.writer, handlers: handlers)
         self.jobQueue = jobQueue
         self.deferredEnqueuer = deferredEnqueuer
         let backfill = BackfillService(
             writer: database.writer, enqueuer: jobQueue, thumbnailsDirectory: thumbnailsDirectory,
-            externalArchiveToolURL: externalArchiveToolURL
+            externalArchiveToolDirectory: externalArchiveToolDirectory
         )
         self.backfill = backfill
         self.rescan = RescanService(
             writer: database.writer, enqueuer: jobQueue, backfill: backfill, thumbnailsDirectory: thumbnailsDirectory,
-            externalArchiveToolURL: externalArchiveToolURL
+            externalArchiveToolDirectory: externalArchiveToolDirectory
         )
         self.liveWatch = LiveWatchCoordinator(backfill: backfill)
     }

@@ -358,10 +358,28 @@ struct AdminView: View {
     private var unsupportedArchivesSection: some View {
         Section("Archives Spool Can't Inspect (\(viewModel.unsupportedArchives.count))") {
             ForEach(viewModel.unsupportedArchives) { zip in
-                Text(zip.filename).lineLimit(1)
+                HStack {
+                    Text(zip.filename).lineLimit(1)
+                    Spacer()
+                    // Staged unsupported because no tool was available *at the time* —
+                    // configuring one afterward (or restarting once one's configured)
+                    // never automatically re-inspects an already-known row, so this is
+                    // the only way an archive dropped before that point ever becomes
+                    // reviewable without deleting and re-adding it.
+                    Button("Check Again") { Task { await viewModel.recheckUnsupportedArchive(zip) } }
+                        .help("Re-check now that an external tool may be configured")
+                }
             }
-            Text("Install `unar` (`brew install unar`) to let Spool look inside .7z/.rar archives for 3D-printing files.")
-                .font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                // Installing the tool alone doesn't do anything — the sandboxed app has
+                // no access to a fixed path like /opt/homebrew/bin/unar until it's
+                // explicitly granted via the Settings picker (see ArchiveToolLocator).
+                // The old wording stopped at "install unar," which left that second,
+                // required step invisible.
+                Text("Install unar or 7z (e.g. `brew install unar`), then locate its folder in Settings to let Spool look inside .7z/.rar archives.")
+                SettingsLink { Text("Open Settings…") }
+            }
+            .font(.caption).foregroundStyle(.secondary)
         }
     }
 

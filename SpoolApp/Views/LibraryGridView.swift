@@ -576,8 +576,9 @@ enum RenderStatusPresentation {
 /// A static hourglass reads identically whether a render job is actively running or
 /// stuck — `.symbolEffect(.pulse)` (the real SF Symbols mechanism for "an ongoing
 /// process," not a hand-rolled opacity/rotation animation) makes pending/rendering
-/// files visibly distinct from a genuinely idle state at a glance.
-private struct RenderStatusIcon: View {
+/// files visibly distinct from a genuinely idle state at a glance. Not `private` — used
+/// by `FileDetailView` too, which was still using a bare `Image` (no pulse) before.
+struct RenderStatusIcon: View {
     let status: FileRenderStatus
     let size: CGFloat
 

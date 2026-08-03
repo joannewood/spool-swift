@@ -19,7 +19,9 @@ public enum ArchiveToolLocator {
         public enum Kind: Sendable { case unar, sevenZip }
     }
 
-    /// `preferredURL` is a user-granted, security-scoped-bookmarked location (see
+    private static let candidateNames = ["unar", "7zz", "7z"]
+
+    /// `preferredDirectory` is a user-granted, security-scoped-bookmarked *folder* (see
     /// `AppSettings.archiveToolBookmarkData`) — checked first, and in practice the
     /// *only* thing that works in the real sandboxed app: confirmed live that
     /// `isExecutableFile` returns false for every one of the fixed `searchPaths` below
@@ -27,9 +29,22 @@ public enum ArchiveToolLocator {
     /// installed there, because they're outside the sandbox container and nothing
     /// grants access to them. The fixed-path scan is kept as a fallback because it
     /// *does* work in an unsandboxed `swift test`/debug context.
-    public static func locate(preferredURL: URL? = nil, fileManager: FileManager = .default) -> Tool? {
-        if let preferredURL, fileManager.isExecutableFile(atPath: preferredURL.path) {
-            return tool(at: preferredURL)
+    ///
+    /// A *folder* bookmark, not a bookmark directly on the executable — confirmed live
+    /// (and it's a documented, known macOS bug) that `.bookmarkData(.withSecurityScope)`
+    /// reliably fails ("Could not open() the item") for a symlink, which is exactly
+    /// what every Homebrew-installed `/opt/homebrew/bin/*` entry is. Granting the real,
+    /// non-symlink containing directory instead — the same folder-bookmark mechanism
+    /// already proven working for watched roots — and searching within it for a known
+    /// name sidesteps the bug entirely rather than working around it file-by-file.
+    public static func locate(preferredDirectory: URL? = nil, fileManager: FileManager = .default) -> Tool? {
+        if let preferredDirectory {
+            for name in candidateNames {
+                let candidate = preferredDirectory.appendingPathComponent(name)
+                if fileManager.isExecutableFile(atPath: candidate.path) {
+                    return tool(at: candidate)
+                }
+            }
         }
         for path in searchPaths where fileManager.isExecutableFile(atPath: path) {
             return tool(at: URL(fileURLWithPath: path))

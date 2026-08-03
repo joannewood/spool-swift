@@ -142,10 +142,15 @@ struct FileDetailView: View {
                     Label("Not watertight", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                 }
                 if viewModel.file.renderStatus == .failed {
-                    Label(RenderErrorLabel.label(for: viewModel.file.renderError), systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .font(.callout)
-                        .help(viewModel.file.renderError ?? "")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(RenderErrorLabel.label(for: viewModel.file.renderError), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .font(.callout)
+                        Text(renderFailureExplanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .help(viewModel.file.renderError ?? "")
                 }
                 if viewModel.printLog?.printed == true {
                     printedBadge
@@ -181,6 +186,22 @@ struct FileDetailView: View {
         return "Printed, \(rating) of 5 stars"
     }
 
+    /// Distinguishes the two mesh-safety guards deliberately rejecting a file (working
+    /// as designed — the guard exists specifically to avoid the OOM crash loops a real
+    /// attempt to render these would cause) from a genuine, unexpected failure, which
+    /// the generic "Render failed" label alone didn't make clear either way.
+    private var renderFailureExplanation: String {
+        switch RenderErrorLabel.category(for: viewModel.file.renderError) {
+        case .knownLimit:
+            return "This is a known limit, not a bug — the file is safely skipped rather than risking a crash."
+        case .unexpected:
+            if let error = viewModel.file.renderError, !error.isEmpty {
+                return "This wasn't expected. Details: \(error)"
+            }
+            return "This wasn't expected, and no further detail was recorded."
+        }
+    }
+
     @ViewBuilder
     private var thumbnailImage: some View {
         if let path = viewModel.file.thumbnailPath,
@@ -188,9 +209,7 @@ struct FileDetailView: View {
             Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).padding(8)
         } else {
             VStack(spacing: 8) {
-                Image(systemName: RenderStatusPresentation.icon(for: viewModel.file.renderStatus))
-                    .font(.system(size: 40))
-                    .foregroundStyle(RenderStatusPresentation.color(for: viewModel.file.renderStatus))
+                RenderStatusIcon(status: viewModel.file.renderStatus, size: 40)
                 Text(viewModel.file.ext.uppercased()).font(.caption).foregroundStyle(.secondary)
             }
         }

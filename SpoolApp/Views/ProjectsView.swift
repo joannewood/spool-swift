@@ -157,6 +157,16 @@ struct ProjectDetailView: View {
                             suggestedFilesSection
                         }
                         if !files.isEmpty {
+                            // Moved here (right-aligned, directly above the files it's
+                            // actually describing) from the top banner, which put it
+                            // above the *suggested*-files section instead — misleading
+                            // next to a section it wasn't counting.
+                            if let summary {
+                                HStack {
+                                    Spacer()
+                                    summaryLine(summary)
+                                }
+                            }
                             LazyVGrid(columns: columns, spacing: 12) {
                                 ForEach(files) { file in
                                     NavigationLink(destination: FileDetailView(file: file, environment: environment)) {
@@ -177,7 +187,6 @@ struct ProjectDetailView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 breadcrumb
-                if let summary { summaryLine(summary) }
             }
             .padding(.horizontal).padding(.top, 8).padding(.bottom, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -329,7 +338,7 @@ struct ProjectDetailView: View {
     /// just opens with the system's own default handler for that file type.
     private var sidecarFilesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Files in This Folder (\(sidecarFiles.count))").font(.headline)
+            Text("Other files in this project (\(sidecarFiles.count))").font(.headline)
             ForEach(sidecarFiles) { sidecar in
                 Button(action: { OpenInAppService.openWithDefaultApplication(fileURL: URL(fileURLWithPath: sidecar.path)) }) {
                     HStack(spacing: 8) {
@@ -688,7 +697,8 @@ private struct ProjectListRow: View {
                 .aspectRatio(1, contentMode: .fit)
                 .overlay {
                     ProjectThumbnailCollage(
-                        paths: visuals?.thumbnailPaths ?? [], thumbnailsDirectory: thumbnailsDirectory, fileCount: summary.fileCount
+                        paths: visuals?.thumbnailPaths ?? [], thumbnailsDirectory: thumbnailsDirectory, fileCount: summary.fileCount,
+                        compact: true
                     )
                 }
                 .frame(width: 40, height: 40)
@@ -718,13 +728,22 @@ private struct ProjectThumbnailCollage: View {
     let paths: [String]
     let thumbnailsDirectory: URL
     let fileCount: Int
+    // The 40×40 list-row thumbnail reuses this same view — a 28pt icon plus a caption2
+    // "N files" line (sized for the much larger grid-card box) badly overflowed it.
+    // `compact` drops to a small bare icon with no text, matching how FileListRow's own
+    // small render-status icon has no accompanying label either.
+    var compact: Bool = false
 
     var body: some View {
         Group {
             if paths.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "folder").font(.system(size: 28)).foregroundStyle(.secondary)
-                    Text("\(fileCount) file\(fileCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.secondary)
+                if compact {
+                    Image(systemName: "folder").font(.system(size: 14)).foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 6) {
+                        Image(systemName: "folder").font(.system(size: 28)).foregroundStyle(.secondary)
+                        Text("\(fileCount) file\(fileCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             } else if paths.count == 1 {
                 thumbImage(paths[0])

@@ -15,13 +15,13 @@ public struct ArchiveExtractionService: Sendable {
     }
 
     private let writer: any DatabaseWriter
-    /// See `ArchiveInspectionService.externalToolURL` — same user-granted, security-
+    /// See `ArchiveInspectionService.externalToolDirectory` — same user-granted, security-
     /// scoped-resolved `unar`/`7z` location, `nil` fully supported.
-    private let externalToolURL: URL?
+    private let externalToolDirectory: URL?
 
-    public init(writer: any DatabaseWriter, externalToolURL: URL? = nil) {
+    public init(writer: any DatabaseWriter, externalToolDirectory: URL? = nil) {
         self.writer = writer
-        self.externalToolURL = externalToolURL
+        self.externalToolDirectory = externalToolDirectory
     }
 
     public func extract(zipFileId: Int64) async throws {
@@ -76,7 +76,7 @@ public struct ArchiveExtractionService: Sendable {
     }
 
     private func extractViaExternalTool(archiveURL: URL, to destinationURL: URL) throws {
-        guard let tool = ArchiveToolLocator.locate(preferredURL: externalToolURL) else { throw ExtractionError.noToolAvailableForFormat }
+        guard let tool = ArchiveToolLocator.locate(preferredDirectory: externalToolDirectory) else { throw ExtractionError.noToolAvailableForFormat }
         let process = Process()
         switch tool.kind {
         case .unar:
@@ -115,8 +115,8 @@ public struct ExtractZipJobHandler: JobHandler {
 
     private let extraction: ArchiveExtractionService
 
-    public init(writer: any DatabaseWriter, externalToolURL: URL? = nil) {
-        self.extraction = ArchiveExtractionService(writer: writer, externalToolURL: externalToolURL)
+    public init(writer: any DatabaseWriter, externalToolDirectory: URL? = nil) {
+        self.extraction = ArchiveExtractionService(writer: writer, externalToolDirectory: externalToolDirectory)
     }
 
     public func handle(_ job: Job) async throws {

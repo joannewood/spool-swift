@@ -84,17 +84,18 @@ private struct GeneralSettingsPane: View {
 /// Optional — Spool works fine with this unconfigured, .7z/.rar archives just show as
 /// unsupported. Zip needs no external tool at all; this exists purely to *also* support
 /// the two archive formats macOS has no native or pure-Swift reader for, if the user
-/// happens to have `unar` or `7z` installed (e.g. via Homebrew). Needs the user to
-/// explicitly grant the binary via `NSOpenPanel` (not just a fixed-path check) because
-/// the sandboxed app has no other access to a path like `/opt/homebrew/bin/unar` — see
-/// `ArchiveToolLocator`.
+/// happens to have `unar` or `7z` installed (e.g. via Homebrew). Grants the *containing
+/// folder*, not the executable itself — confirmed live that a security-scoped bookmark
+/// directly on a Homebrew binary reliably fails ("Could not open() the item"), because
+/// every `/opt/homebrew/bin/*` entry is a symlink, and that's a documented, known macOS
+/// bug independent of anything this app does. See `ArchiveToolLocator`.
 private struct ArchiveToolPickerRow: View {
     @ObservedObject var viewModel: SettingsViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let path = viewModel.archiveToolPath {
-                Text("Using \((path as NSString).lastPathComponent) for .7z/.rar archives")
+                Text("Looking for unar or 7z in this folder for .7z/.rar support:")
                     .font(.caption)
                 Text(path)
                     .font(.caption2)
@@ -109,16 +110,20 @@ private struct ArchiveToolPickerRow: View {
                 Text("Optional — lets Spool also recognize .7z/.rar archives worth reviewing, if you have unar or 7z installed. Without it, they're still tracked, just marked unsupported.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Locate unar or 7z…") { locate() }
+                Button("Locate Folder Containing unar or 7z…") { locate() }
             }
         }
         .padding(.top, 2)
     }
 
     private func locate() {
-        guard let url = FolderPickerService.pickFile(
+        let defaultDirectory = ["/opt/homebrew/bin", "/usr/local/bin"]
+            .map { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+        guard let url = FolderPickerService.pickFolder(
             prompt: "Choose",
-            message: "Choose the unar or 7z executable — used to recognize .7z/.rar archives worth reviewing. Takes effect after restarting Spool."
+            message: "Choose the folder containing unar or 7z (e.g. /opt/homebrew/bin) — used to recognize .7z/.rar archives worth reviewing. Takes effect after restarting Spool.",
+            defaultDirectory: defaultDirectory
         ) else { return }
         Task { await viewModel.grantArchiveTool(url: url) }
     }

@@ -11,14 +11,28 @@ public struct ArchiveInspectionService: Sendable {
     private let writer: any DatabaseWriter
     private let enqueuer: any JobEnqueuer
     /// A user-granted, security-scoped-resolved location for `unar`/`7z` — see
-    /// `ArchiveToolLocator.locate(preferredURL:)`. `nil` is fully supported: .7z/.rar
+    /// `ArchiveToolLocator.locate(preferredDirectory:)`. `nil` is fully supported: .7z/.rar
     /// archives are staged as `.unsupportedFormat` instead, same as always.
-    private let externalToolURL: URL?
+    private let externalToolDirectory: URL?
+    /// Threaded through to `ArchiveToolLocator.locate` — exists so a test asserting
+    /// "no tool available" behavior doesn't depend on whether unar/7z genuinely happens
+    /// to be installed on whatever machine runs the suite (a real, confirmed flake:
+    /// this repo's own release-signing work installed a real `7zz` via Homebrew for
+    /// manual testing, which the fixed-path fallback scan then legitimately found).
+    // `FileManager` isn't formally `Sendable` (though `.default` is documented
+    // thread-safe) — `nonisolated(unsafe)` is needed to store one on this `Sendable`
+    // struct at all, same tradeoff RescanService/BackfillService accept implicitly by
+    // being actors instead.
+    nonisolated(unsafe) private let fileManager: FileManager
 
-    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer, externalToolURL: URL? = nil) {
+    public init(
+        writer: any DatabaseWriter, enqueuer: any JobEnqueuer, externalToolDirectory: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
         self.writer = writer
         self.enqueuer = enqueuer
-        self.externalToolURL = externalToolURL
+        self.externalToolDirectory = externalToolDirectory
+        self.fileManager = fileManager
     }
 
     private static let archiveExtensions: Set<String> = ["zip", "7z", "rar"]
@@ -50,7 +64,7 @@ public struct ArchiveInspectionService: Sendable {
             )
         } else {
             // .7z / .rar — no native or pure-Swift support for either format.
-            if let tool = ArchiveToolLocator.locate(preferredURL: externalToolURL) {
+            if let tool = ArchiveToolLocator.locate(preferredDirectory: externalToolDirectory, fileManager: fileManager) {
                 guard let listing = try? peekViaExternalTool(path: path, tool: tool),
                       containsModelFile(scanningRawText: listing) else { return }
                 try await stage(
@@ -68,6 +82,47 @@ public struct ArchiveInspectionService: Sendable {
                 )
             }
         }
+    }
+
+    /// Re-evaluates an archive already staged as `.unsupportedFormat` — it was staged
+    /// that way because no external tool was available *at the time*, not because it
+    /// was inspected and found irrelevant, so it's worth a second look once a tool
+    /// becomes available (e.g. the user just configured one in Settings). Confirmed
+    /// live as a real gap: without this, an archive dropped before the tool was
+    /// configured stayed stuck as unsupported forever, even after configuring one and
+    /// restarting — nothing ever re-inspected it, since `inspect`'s own (path,
+    /// content_hash) uniqueness check treats it as already-known and skips it.
+    /// No-ops (returns `false`) rather than throwing if the row isn't
+    /// `.unsupportedFormat` or a tool still isn't available, so it's safe to call
+    /// speculatively from a "Check Again" button without the caller pre-checking either
+    /// condition itself.
+    @discardableResult
+    public func recheckUnsupported(zipFileId: Int64) async throws -> Bool {
+        guard let zip = try await writer.read({ conn in try ZipFile.fetchOne(conn, id: zipFileId) }),
+              zip.status == .unsupportedFormat,
+              let tool = ArchiveToolLocator.locate(preferredDirectory: externalToolDirectory, fileManager: fileManager)
+        else { return false }
+
+        guard let listing = try? peekViaExternalTool(path: zip.path, tool: tool),
+              containsModelFile(scanningRawText: listing)
+        else { return false }
+
+        try await writer.write { conn in
+            try conn.execute(sql: "UPDATE zip_files SET status = ? WHERE id = ?", arguments: [ZipStatus.suggested.rawValue, zipFileId])
+        }
+
+        // Same auto-accept behavior `stage` gives a freshly-detected archive — this
+        // becoming reviewable now is equivalent to it having been detected just now.
+        let autoAccept = try await writer.read { conn in
+            try AppSettings.fetchOne(conn, key: AppSettings.singletonId)?.autoAcceptArchives ?? false
+        }
+        if autoAccept {
+            try await writer.write { conn in
+                try conn.execute(sql: "UPDATE zip_files SET status = 'confirmed' WHERE id = ?", arguments: [zipFileId])
+            }
+            try await enqueuer.enqueue(fileId: nil, zipFileId: zipFileId, jobType: .extractZip)
+        }
+        return true
     }
 
     private func stage(

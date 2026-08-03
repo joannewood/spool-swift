@@ -12,6 +12,13 @@ private actor RecordingEnqueuer: JobEnqueuer {
     }
 }
 
+/// Makes "no external tool available" deterministic regardless of what's actually
+/// installed on the machine running the suite — `ArchiveToolLocator`'s fixed-path
+/// fallback scan is real filesystem state, not something a test should depend on.
+private final class NoToolFileManager: FileManager {
+    override func isExecutableFile(atPath path: String) -> Bool { false }
+}
+
 @Suite struct ArchiveInspectionServiceTests {
     private func makeRoot(_ db: SQLiteSpoolDatabase) async throws -> Int64 {
         let root = try await db.writer.write { conn in
@@ -135,17 +142,18 @@ private actor RecordingEnqueuer: JobEnqueuer {
 
     @Test func sevenZipWithNoExternalToolAvailableIsTrackedAsUnsupportedFormat() async throws {
         // No native or pure-Swift .7z reader exists — the service shells out to an
-        // external tool (unar/7z) if one happens to be installed, and this dev/CI
-        // machine has neither (confirmed: `which unar 7z` finds nothing), so this
-        // exercises the real "can't determine relevance, track defensively" fallback
-        // rather than silently dropping the archive.
+        // external tool (unar/7z) if one happens to be installed. `NoToolFileManager`
+        // forces "not installed" deterministically (see its own doc comment) rather
+        // than trusting the real machine's state, so this exercises the real "can't
+        // determine relevance, track defensively" fallback rather than silently
+        // dropping the archive.
         let db = try SQLiteSpoolDatabase(path: nil)
         let rootId = try await makeRoot(db)
         let archiveURL = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveInspectionTests-\(UUID().uuidString).7z")
         try Data("not a real 7z file, but its content doesn't matter here".utf8).write(to: archiveURL)
         defer { try? FileManager.default.removeItem(at: archiveURL) }
 
-        let service = ArchiveInspectionService(writer: db.writer, enqueuer: RecordingEnqueuer())
+        let service = ArchiveInspectionService(writer: db.writer, enqueuer: RecordingEnqueuer(), fileManager: NoToolFileManager())
         try await service.inspect(path: archiveURL.path, watchedRootId: rootId)
 
         let zips = try await db.writer.read { conn in try ZipFile.fetchAll(conn) }

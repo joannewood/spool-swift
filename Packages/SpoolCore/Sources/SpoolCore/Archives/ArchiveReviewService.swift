@@ -7,10 +7,19 @@ import GRDB
 public struct ArchiveReviewService: Sendable {
     private let writer: any DatabaseWriter
     private let enqueuer: any JobEnqueuer
+    private let inspection: ArchiveInspectionService
 
-    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer) {
+    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer, externalArchiveToolDirectory: URL? = nil) {
         self.writer = writer
         self.enqueuer = enqueuer
+        self.inspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer, externalToolDirectory: externalArchiveToolDirectory)
+    }
+
+    /// See `ArchiveInspectionService.recheckUnsupported` — the "Check Again" action for
+    /// an archive stuck as unsupported from before an external tool was configured.
+    @discardableResult
+    public func recheckUnsupported(zipFileId: Int64) async throws -> Bool {
+        try await inspection.recheckUnsupported(zipFileId: zipFileId)
     }
 
     public func pendingArchives() async throws -> [ZipFile] {

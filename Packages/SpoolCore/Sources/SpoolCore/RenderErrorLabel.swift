@@ -9,7 +9,27 @@ import Foundation
 /// file) falls back to a generic label — the raw text is still available separately
 /// (e.g. a tooltip) for anyone who needs it.
 public enum RenderErrorLabel {
+    /// `.knownLimit` is one of the two mesh-safety guards deliberately rejecting a file
+    /// to avoid the OOM crash loops those guards exist to prevent — working as
+    /// designed, not a bug. `.unexpected` is everything else: a real parse failure, a
+    /// malformed file, or an actual bug, and worth a bug report if it keeps happening.
+    public enum Category {
+        case knownLimit
+        case unexpected
+    }
+
     public static func label(for errorText: String?) -> String {
+        switch category(for: errorText) {
+        case .knownLimit: return knownLimitLabel(for: errorText) ?? "Render failed"
+        case .unexpected: return "Render failed"
+        }
+    }
+
+    public static func category(for errorText: String?) -> Category {
+        knownLimitLabel(for: errorText) != nil ? .knownLimit : .unexpected
+    }
+
+    private static func knownLimitLabel(for errorText: String?) -> String? {
         let text = errorText ?? ""
         if text.contains("uncompressed"), text.contains("safety limit") {
             return "Mesh too large to render"
@@ -17,6 +37,6 @@ public enum RenderErrorLabel {
         if text.contains("build references"), text.contains("safety limit") {
             return "Too complex to render"
         }
-        return "Render failed"
+        return nil
     }
 }

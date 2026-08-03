@@ -88,6 +88,21 @@ final class AdminViewModel: ObservableObject {
         } catch { lastError = "\(error)" }
     }
 
+    /// An archive staged as unsupported before an external tool was configured stays
+    /// that way forever otherwise — nothing re-inspects it on its own, since
+    /// `ArchiveInspectionService.inspect`'s own (path, content_hash) uniqueness check
+    /// treats an already-known row as, well, already known. Silently does nothing
+    /// (besides refreshing the lists, which is a no-op if nothing changed) if a tool
+    /// still isn't available or this one genuinely still isn't relevant.
+    func recheckUnsupportedArchive(_ zip: ZipFile) async {
+        guard let id = zip.id else { return }
+        do {
+            _ = try await environment.archiveReview.recheckUnsupported(zipFileId: id)
+            pendingArchives = try await environment.archiveReview.pendingArchives()
+            unsupportedArchives = try await environment.archiveReview.unsupportedArchives()
+        } catch { lastError = "\(error)" }
+    }
+
     func confirmSelectedArchives(ids: Set<Int64>) async {
         do {
             try await environment.archiveReview.confirm(zipFileIds: Array(ids))

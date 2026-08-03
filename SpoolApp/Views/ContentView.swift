@@ -91,7 +91,7 @@ struct ContentView: View {
                                     .foregroundStyle(.white)
                                     .padding(3)
                                     .background(Circle().fill(.red))
-                                    .offset(x: 8, y: -8)
+                                    .offset(x: 4, y: -4)
                                     .accessibilityHidden(true)
                             }
                         }
