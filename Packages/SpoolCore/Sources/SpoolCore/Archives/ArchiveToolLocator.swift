@@ -19,11 +19,26 @@ public enum ArchiveToolLocator {
         public enum Kind: Sendable { case unar, sevenZip }
     }
 
-    public static func locate(fileManager: FileManager = .default) -> Tool? {
+    /// `preferredURL` is a user-granted, security-scoped-bookmarked location (see
+    /// `AppSettings.archiveToolBookmarkData`) — checked first, and in practice the
+    /// *only* thing that works in the real sandboxed app: confirmed live that
+    /// `isExecutableFile` returns false for every one of the fixed `searchPaths` below
+    /// under the app's actual shipped entitlements, even when the binary is genuinely
+    /// installed there, because they're outside the sandbox container and nothing
+    /// grants access to them. The fixed-path scan is kept as a fallback because it
+    /// *does* work in an unsandboxed `swift test`/debug context.
+    public static func locate(preferredURL: URL? = nil, fileManager: FileManager = .default) -> Tool? {
+        if let preferredURL, fileManager.isExecutableFile(atPath: preferredURL.path) {
+            return tool(at: preferredURL)
+        }
         for path in searchPaths where fileManager.isExecutableFile(atPath: path) {
-            let kind: Tool.Kind = path.contains("unar") ? .unar : .sevenZip
-            return Tool(executableURL: URL(fileURLWithPath: path), kind: kind)
+            return tool(at: URL(fileURLWithPath: path))
         }
         return nil
+    }
+
+    private static func tool(at url: URL) -> Tool {
+        let kind: Tool.Kind = url.lastPathComponent.lowercased().contains("unar") ? .unar : .sevenZip
+        return Tool(executableURL: url, kind: kind)
     }
 }

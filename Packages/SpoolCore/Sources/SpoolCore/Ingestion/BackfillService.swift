@@ -19,10 +19,15 @@ public actor BackfillService {
     /// `thumbnailsDirectory` is optional so tests that don't care about sidecar image
     /// thumbnails can omit it — sidecar presence is still staged either way, just
     /// without a thumbnail copy for image sidecars.
-    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer, thumbnailsDirectory: URL? = nil) {
+    public init(
+        writer: any DatabaseWriter,
+        enqueuer: any JobEnqueuer,
+        thumbnailsDirectory: URL? = nil,
+        externalArchiveToolURL: URL? = nil
+    ) {
         self.writer = writer
         self.enqueuer = enqueuer
-        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer)
+        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer, externalToolURL: externalArchiveToolURL)
         self.sidecars = SidecarService(writer: writer, thumbnailsDirectory: thumbnailsDirectory)
     }
 

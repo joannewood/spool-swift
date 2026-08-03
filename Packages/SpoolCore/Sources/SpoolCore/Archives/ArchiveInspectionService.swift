@@ -10,10 +10,15 @@ import ZIPFoundation
 public struct ArchiveInspectionService: Sendable {
     private let writer: any DatabaseWriter
     private let enqueuer: any JobEnqueuer
+    /// A user-granted, security-scoped-resolved location for `unar`/`7z` — see
+    /// `ArchiveToolLocator.locate(preferredURL:)`. `nil` is fully supported: .7z/.rar
+    /// archives are staged as `.unsupportedFormat` instead, same as always.
+    private let externalToolURL: URL?
 
-    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer) {
+    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer, externalToolURL: URL? = nil) {
         self.writer = writer
         self.enqueuer = enqueuer
+        self.externalToolURL = externalToolURL
     }
 
     private static let archiveExtensions: Set<String> = ["zip", "7z", "rar"]
@@ -45,7 +50,7 @@ public struct ArchiveInspectionService: Sendable {
             )
         } else {
             // .7z / .rar — no native or pure-Swift support for either format.
-            if let tool = ArchiveToolLocator.locate() {
+            if let tool = ArchiveToolLocator.locate(preferredURL: externalToolURL) {
                 guard let listing = try? peekViaExternalTool(path: path, tool: tool),
                       containsModelFile(scanningRawText: listing) else { return }
                 try await stage(

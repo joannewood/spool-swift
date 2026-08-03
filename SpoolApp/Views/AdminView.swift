@@ -121,7 +121,12 @@ struct AdminView: View {
         .task(id: selection) {
             if selection == .status { await viewModel.loadStatus() }
         }
-        .alert("Error", isPresented: .constant(viewModel.lastError != nil), actions: {
+        // See SettingsView's identical fix — `.constant()` here is a real, confirmed
+        // trigger for "Publishing changes from within view updates is not allowed".
+        .alert("Error", isPresented: Binding(
+            get: { viewModel.lastError != nil },
+            set: { if !$0 { viewModel.lastError = nil } }
+        ), actions: {
             Button("OK") { viewModel.lastError = nil }
         }, message: { Text(viewModel.lastError ?? "") })
         .frame(minWidth: 640, minHeight: 480)

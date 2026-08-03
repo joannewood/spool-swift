@@ -1,6 +1,8 @@
 import Combine
 import Foundation
+import GRDB
 import SpoolCore
+import SpoolFS
 
 /// Wires together the app's long-lived singletons: the on-disk database, the watched-
 /// root repository, the job queue (with real ingest/render handlers as of M1 — extract-
@@ -34,6 +36,9 @@ final class AppEnvironment: ObservableObject {
     let detectedApps: [DetectedApp]
     private let deferredEnqueuer: DeferredJobEnqueuer
     private var rescanTask: Task<Void, Never>?
+    // Holds the security scope open for the app's lifetime, same convention as
+    // `RootAccessManager` — see `resolveArchiveToolAccess`.
+    private var archiveToolAccess: SecurityScopedAccess?
 
     init() throws {
         let database = try SQLiteSpoolDatabase(path: try SQLiteSpoolDatabase.defaultPath())
@@ -54,6 +59,15 @@ final class AppEnvironment: ObservableObject {
         self.appSettings = AppSettingsService(writer: database.writer)
         self.detectedApps = InstalledAppDetector.detectAll()
 
+        // Resolved synchronously, once, here — everything below that needs it
+        // (BackfillService/RescanService/ExtractZipJobHandler) is constructed
+        // synchronously in this same init, before `start()`'s async work even begins.
+        // A settings change made later in Settings takes effect on next launch, not
+        // live — see the picker's UI copy.
+        let archiveToolAccess = Self.resolveArchiveToolAccess(writer: database.writer)
+        self.archiveToolAccess = archiveToolAccess
+        let externalArchiveToolURL = archiveToolAccess?.url
+
         // IngestJobHandler (and ArchiveReviewService.confirm, below) need a JobEnqueuer
         // to dispatch a follow-up job — but that enqueuer *is* the JobQueue being
         // constructed right here, which itself needs the handlers up front.
@@ -67,14 +81,20 @@ final class AppEnvironment: ObservableObject {
             render: RenderJobHandler(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory),
             renderStep: StepTessellationJobHandler(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory),
             rescan: NoOpJobHandler(),
-            extractZip: ExtractZipJobHandler(writer: database.writer)
+            extractZip: ExtractZipJobHandler(writer: database.writer, externalToolURL: externalArchiveToolURL)
         )
         let jobQueue = JobQueue(writer: database.writer, handlers: handlers)
         self.jobQueue = jobQueue
         self.deferredEnqueuer = deferredEnqueuer
-        let backfill = BackfillService(writer: database.writer, enqueuer: jobQueue, thumbnailsDirectory: thumbnailsDirectory)
+        let backfill = BackfillService(
+            writer: database.writer, enqueuer: jobQueue, thumbnailsDirectory: thumbnailsDirectory,
+            externalArchiveToolURL: externalArchiveToolURL
+        )
         self.backfill = backfill
-        self.rescan = RescanService(writer: database.writer, enqueuer: jobQueue, backfill: backfill, thumbnailsDirectory: thumbnailsDirectory)
+        self.rescan = RescanService(
+            writer: database.writer, enqueuer: jobQueue, backfill: backfill, thumbnailsDirectory: thumbnailsDirectory,
+            externalArchiveToolURL: externalArchiveToolURL
+        )
         self.liveWatch = LiveWatchCoordinator(backfill: backfill)
     }
 
@@ -145,6 +165,17 @@ final class AppEnvironment: ObservableObject {
             guard let rootId = root.id, let url = rootAccess.url(forRootId: rootId) else { return nil }
             return (root, url)
         }
+    }
+
+    /// A missing/unresolvable bookmark is not an error — "no external archive tool
+    /// configured" is a fully supported state (.7z/.rar archives just show as
+    /// unsupported), so every failure path here silently returns `nil` rather than
+    /// throwing and blocking app launch over an optional feature.
+    private static func resolveArchiveToolAccess(writer: any DatabaseWriter) -> SecurityScopedAccess? {
+        guard let data = try? writer.read({ conn in
+            try AppSettings.fetchOne(conn, key: AppSettings.singletonId)
+        })?.archiveToolBookmarkData else { return nil }
+        return try? SecurityScopedAccess.resolve(bookmarkData: data)
     }
 
     private static func makeThumbnailsDirectory() throws -> URL {

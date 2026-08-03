@@ -90,7 +90,12 @@ struct FileDetailView: View {
         .frame(maxWidth: .infinity)
         .navigationTitle(viewModel.file.displayName ?? viewModel.file.filename)
         .task { await viewModel.load() }
-        .alert("Error", isPresented: .constant(viewModel.lastError != nil), actions: {
+        // See SettingsView's identical fix — `.constant()` here is a real, confirmed
+        // trigger for "Publishing changes from within view updates is not allowed".
+        .alert("Error", isPresented: Binding(
+            get: { viewModel.lastError != nil },
+            set: { if !$0 { viewModel.lastError = nil } }
+        ), actions: {
             Button("OK") { viewModel.lastError = nil }
         }, message: { Text(viewModel.lastError ?? "") })
         .alert("Rename", isPresented: $isRenaming) {

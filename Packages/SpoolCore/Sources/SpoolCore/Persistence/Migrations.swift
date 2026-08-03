@@ -215,4 +215,15 @@ func registerMigrations(_ migrator: inout DatabaseMigrator) {
                 CHECK (color IN ('blue','red','orange','yellow','green','purple','gray'))
             """)
     }
+
+    // A security-scoped bookmark for an optional, user-located `unar`/`7z` binary.
+    // `ArchiveToolLocator`'s fixed-path search (checking e.g. /opt/homebrew/bin/unar
+    // directly) only ever worked in unsandboxed dev builds — confirmed live that under
+    // the real shipped app's sandbox entitlements, `FileManager.isExecutableFile`
+    // returns false for every such path even when the binary is genuinely installed,
+    // silently defeating .7z/.rar support entirely. This bookmark, granted once via
+    // NSOpenPanel in Settings, is the actual sandbox-compliant fix.
+    migrator.registerMigration("v4_archive_tool_bookmark") { db in
+        try db.execute(sql: "ALTER TABLE app_settings ADD COLUMN archive_tool_bookmark_data BLOB")
+    }
 }

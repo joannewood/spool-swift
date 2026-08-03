@@ -118,7 +118,12 @@ struct ContentView: View {
         // grid's own minimum column width can be squeezed into an overlapping, broken
         // layout well before the window becomes too small to be useful.
         .frame(minWidth: 820, minHeight: 500)
-        .alert("Error", isPresented: .constant(viewModel.lastError != nil), actions: {
+        // See SettingsView's identical fix — `.constant()` here is a real, confirmed
+        // trigger for "Publishing changes from within view updates is not allowed".
+        .alert("Error", isPresented: Binding(
+            get: { viewModel.lastError != nil },
+            set: { if !$0 { viewModel.lastError = nil } }
+        ), actions: {
             Button("OK") { viewModel.lastError = nil }
         }, message: {
             Text(viewModel.lastError ?? "")

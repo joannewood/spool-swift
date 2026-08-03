@@ -40,11 +40,12 @@ public actor RescanService {
         writer: any DatabaseWriter,
         enqueuer: any JobEnqueuer,
         backfill: BackfillService,
-        thumbnailsDirectory: URL? = nil
+        thumbnailsDirectory: URL? = nil,
+        externalArchiveToolURL: URL? = nil
     ) {
         self.writer = writer
         self.enqueuer = enqueuer
-        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer)
+        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer, externalToolURL: externalArchiveToolURL)
         self.sidecars = SidecarService(writer: writer, thumbnailsDirectory: thumbnailsDirectory)
         self.backfill = backfill
     }

@@ -33,7 +33,16 @@ struct SettingsView: View {
         .frame(width: 480, height: 420)
         .task { await viewModel.load() }
         .task { await rootsViewModel.refresh() }
-        .alert("Error", isPresented: .constant(viewModel.lastError != nil), actions: {
+        // A real two-way `Binding`, not `.constant(viewModel.lastError != nil)` — the
+        // latter's setter is a no-op, so when SwiftUI's own dismissal machinery tries
+        // to write `false` back through it (not just the OK button's action), that
+        // write happens mid-transaction with nowhere to go. Confirmed live as a real,
+        // if intermittent, trigger for "Publishing changes from within view updates is
+        // not allowed" — this exact anti-pattern was duplicated across five views.
+        .alert("Error", isPresented: Binding(
+            get: { viewModel.lastError != nil },
+            set: { if !$0 { viewModel.lastError = nil } }
+        ), actions: {
             Button("OK") { viewModel.lastError = nil }
         }, message: { Text(viewModel.lastError ?? "") })
     }
@@ -65,9 +74,53 @@ private struct GeneralSettingsPane: View {
                     set: { newValue in Task { await viewModel.saveAutoAcceptArchives(newValue) } }
                 ))
                 .help("Skip the Archives review queue and extract zip files as soon as a 3D-printing file is found inside")
+                ArchiveToolPickerRow(viewModel: viewModel)
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Optional — Spool works fine with this unconfigured, .7z/.rar archives just show as
+/// unsupported. Zip needs no external tool at all; this exists purely to *also* support
+/// the two archive formats macOS has no native or pure-Swift reader for, if the user
+/// happens to have `unar` or `7z` installed (e.g. via Homebrew). Needs the user to
+/// explicitly grant the binary via `NSOpenPanel` (not just a fixed-path check) because
+/// the sandboxed app has no other access to a path like `/opt/homebrew/bin/unar` — see
+/// `ArchiveToolLocator`.
+private struct ArchiveToolPickerRow: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let path = viewModel.archiveToolPath {
+                Text("Using \((path as NSString).lastPathComponent) for .7z/.rar archives")
+                    .font(.caption)
+                Text(path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack {
+                    Button("Change…") { locate() }
+                    Button("Remove") { Task { await viewModel.clearArchiveTool() } }
+                }
+            } else {
+                Text("Optional — lets Spool also recognize .7z/.rar archives worth reviewing, if you have unar or 7z installed. Without it, they're still tracked, just marked unsupported.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Locate unar or 7z…") { locate() }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func locate() {
+        guard let url = FolderPickerService.pickFile(
+            prompt: "Choose",
+            message: "Choose the unar or 7z executable — used to recognize .7z/.rar archives worth reviewing. Takes effect after restarting Spool."
+        ) else { return }
+        Task { await viewModel.grantArchiveTool(url: url) }
     }
 }
 

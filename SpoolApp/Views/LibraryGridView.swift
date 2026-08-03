@@ -102,7 +102,13 @@ struct LibraryGridView: View {
         .onKeyPress(.return) { openFocusedItem() ? .handled : .ignored }
         .onKeyPress(.delete) { deleteFocusedOrSelected() ? .handled : .ignored }
         .onKeyPress(.deleteForward) { deleteFocusedOrSelected() ? .handled : .ignored }
-        .alert("Couldn't Import", isPresented: .constant(importAlertMessage != nil), actions: {
+        // See ContentView/AdminView/etc.'s identical fix — `.constant()` here is a
+        // real, confirmed trigger for "Publishing changes from within view updates is
+        // not allowed".
+        .alert("Couldn't Import", isPresented: Binding(
+            get: { importAlertMessage != nil },
+            set: { if !$0 { importAlertMessage = nil } }
+        ), actions: {
             Button("OK") { importAlertMessage = nil }
         }, message: { Text(importAlertMessage ?? "") })
         .searchable(text: $libraryViewModel.searchQuery, prompt: "Search filenames, tags, print settings…")
