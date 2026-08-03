@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Getting Started — Spool Help</title>
+<link rel="stylesheet" href="help.css">
+</head>
+<body>
+<p class="crumb"><a href="index.html">Spool Help</a> &rsaquo; Getting Started</p>
+<h1>Getting Started</h1>
+<p class="subtitle">Grant a folder, and Spool takes it from there.</p>
+
+<h2>Granting your first folder</h2>
+<p>Spool only ever looks inside folders you explicitly grant it access to — this is standard
+macOS sandboxing, the same permission model as apps like Photos or Music. To add one:</p>
+<ul>
+<li>Click the <strong>+</strong> button at the bottom of the sidebar, or</li>
+<li>Use the <strong>File</strong> menu's "Add Drop Folder…", "Add Library Folder…", or "Add
+Downloads Folder…" commands — these work even if the sidebar isn't visible.</li>
+</ul>
+<p>A standard Open panel appears; pick the folder you want watched. Spool walks it immediately
+and then keeps watching it live for as long as the app is running.</p>
+
+<h2>The three folder types</h2>
+<table>
+<tr><th>Type</th><th>What it means</th></tr>
+<tr><td><strong>Drop Folder</strong></td><td>Files here are indexed and can be freely
+reorganized — moved, tagged, or deleted from within Spool. This is the one folder every
+library needs, and the destination new files land in when dragged into Spool or relocated
+from a Downloads folder.</td></tr>
+<tr><td><strong>Library (Read-Only)</strong></td><td>Files here are indexed but Spool never
+modifies, moves, or deletes them — safe for a folder you don't want touched, like an archive
+of finished prints. Duplicate files living here can never be deleted from within Spool, even
+during a bulk cleanup.</td></tr>
+<tr><td><strong>Downloads</strong></td><td>New 3D-printing files discovered here are
+automatically moved into your Drop Folder once indexed, keeping a real Downloads folder tidy
+without you having to move things by hand.</td></tr>
+</table>
+
+<h2>Editing, pausing, or removing a folder</h2>
+<p>Hover a folder in the sidebar's "Watched Folders" section for a pencil and a minus button:</p>
+<ul>
+<li>The <strong>pencil</strong> lets you rename it, pause watching without losing its history
+(tags, projects, print log all stay attached to those files), or — for a Library folder only —
+switch whether new files there are indexed in place or moved into the Drop Folder.</li>
+<li>The <strong>minus</strong> stops watching it entirely. This removes every indexed file,
+tag, project membership, and print log entry for that folder from Spool's library — the real
+files on disk are never touched.</li>
+</ul>
+
+<h2>Adding files directly</h2>
+<p>You can also drag files straight from Finder onto Spool's library grid. They're copied
+(your originals are left alone) into the active Drop Folder and indexed immediately. Dragging
+a file card back out of Spool onto Finder or a slicer's Dock icon works the same way a real
+Finder drag would.</p>
+
+<div class="nav-footer">
+<a href="index.html">← Spool Help</a>
+<a href="browsing-and-organizing.html">Browsing &amp; Organizing →</a>
+</div>
+</body>
+</html>

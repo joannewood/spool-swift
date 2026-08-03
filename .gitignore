@@ -1,0 +1,22 @@
+# Xcode / XcodeGen — Spool.xcodeproj is a generated artifact (see CLAUDE.md);
+# project.yml is the source of truth. Run `xcodegen generate` after cloning.
+/Spool.xcodeproj/
+/Spool 2.xcodeproj/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# Compiled helper binaries — built by build.sh / the Xcode preBuildScripts phase,
+# not source (see Tools/StepConverter/xcode_build_phase.sh, build.sh)
+/Tools/StepConverter/gen_fixture
+/Tools/StepConverter/step-tessellate
+
+# macOS
+.DS_Store
+
+# Claude Code local project state
+.claude/

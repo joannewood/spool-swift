@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reviewing Duplicates, Suggestions &amp; Archives — Spool Help</title>
+<link rel="stylesheet" href="help.css">
+</head>
+<body>
+<p class="crumb"><a href="index.html">Spool Help</a> &rsaquo; Reviewing Duplicates, Suggestions &amp; Archives</p>
+<h1>Reviewing Duplicates, Suggestions &amp; Archives</h1>
+<p class="subtitle">Everything that needs a decision from you lives in one window, separate
+from your library.</p>
+
+<p>Open it from the toolbar's wrench icon, the <strong>Window</strong> menu, or
+<kbd>⌘⌥A</kbd>. It's a real window, not a dialog — you can keep it open alongside your library
+and switch back and forth freely. Each section's sidebar badge shows how many items are
+waiting for a decision.</p>
+
+<h2>Duplicates</h2>
+<p>Files with byte-identical content are grouped together. For each group:</p>
+<ul>
+<li>If a copy lives in a <strong>Library (Read-Only)</strong> folder, that copy can never be
+deleted from Spool — it's shown but protected.</li>
+<li>Otherwise the oldest copy is kept by default; everything else is a candidate for deletion.</li>
+<li><strong>Clean Up All Duplicates</strong> applies that default to every group in one action.
+Deletions move files to the Trash — recoverable, not permanent.</li>
+</ul>
+
+<h2>Suggestions</h2>
+<p>Two kinds of heuristic-driven suggestions land here: file <strong>relationships</strong>
+(duplicate-of, variant-of, derived-from, new-version-of — based on matching content hashes or
+filename patterns) and <strong>project memberships</strong> (files that share a folder). Each
+row can be confirmed or rejected individually, or use the bulk bar at the bottom to check off a
+subset or accept everything at once. Rejecting is remembered — a suggestion you've turned down
+won't come back for the same file.</p>
+
+<h2>Archives</h2>
+<p>A <code>.zip</code>, <code>.7z</code>, or <code>.rar</code> found inside a watched folder is
+only ever surfaced here if it actually contains a recognized 3D-printing file inside — an
+archive of photos or documents is left alone entirely, never even listed.</p>
+<ul>
+<li><strong>Pending</strong> archives are confirmed (extracted, with the original archive then
+removed) or rejected (remembered — the exact same file won't be asked about again, but a
+different file later reusing the same name will be).</li>
+<li><strong>Unsupported</strong> archives are <code>.7z</code>/<code>.rar</code> files found
+without <code>unar</code> installed (<code>brew install unar</code>) to look inside them —
+install it and re-open Spool to pick these back up automatically.</li>
+</ul>
+<p>Turn on <strong>auto-accept</strong> in <a href="settings-and-shortcuts.html">Settings</a> to
+skip this queue entirely and have every relevant archive extracted the moment it's found.</p>
+
+<h2>Status</h2>
+<p>A live view of the ingestion pipeline — how many files are hashed and rendered, what's
+currently queued or running, and recent job successes/failures with their errors. Useful when
+something seems stuck: a large STEP-file backlog, for instance, renders on its own slower lane
+so it can never block ordinary STL/3MF thumbnails from keeping up.</p>
+
+<div class="nav-footer">
+<a href="browsing-and-organizing.html">← Browsing &amp; Organizing</a>
+<a href="settings-and-shortcuts.html">Settings &amp; Shortcuts →</a>
+</div>
+</body>
+</html>

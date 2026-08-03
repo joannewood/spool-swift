@@ -1,0 +1,80 @@
+name: Spool
+options:
+  bundleIdPrefix: com.joannewood
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  SpoolCore:
+    path: Packages/SpoolCore
+  SpoolMesh:
+    path: Packages/SpoolMesh
+  SpoolFS:
+    path: Packages/SpoolFS
+
+targets:
+  SpoolApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: SpoolApp/App
+      - path: SpoolApp/Views
+      - path: SpoolApp/Resources/Assets.xcassets
+      - path: SpoolApp/Resources/Spool.help
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: SpoolCore
+      - package: SpoolMesh
+      - package: SpoolFS
+    preBuildScripts:
+      - name: "Build step-tessellate (OCCT STEP converter)"
+        path: Tools/StepConverter/xcode_build_phase.sh
+        inputFiles:
+          - $(SRCROOT)/Tools/StepConverter/main.cpp
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/step-tessellate
+        runOnlyWhenInstalling: false
+        shell: /bin/bash
+    postBuildScripts:
+      - name: "Index Spool Help"
+        script: |
+          set -euo pipefail
+          HELP_DIR="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Spool.help/Contents/Resources/en.lproj"
+          if [ -d "$HELP_DIR" ]; then
+            hiutil -Cf "$HELP_DIR/search.helpindex" "$HELP_DIR"
+            echo "indexed Spool Help -> $HELP_DIR/search.helpindex"
+          else
+            echo "warning: Spool.help not found at $HELP_DIR — skipping help index generation" >&2
+          fi
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Spool.help/Contents/Resources/en.lproj/search.helpindex
+        runOnlyWhenInstalling: false
+        shell: /bin/bash
+    settings:
+      base:
+        PRODUCT_NAME: Spool
+        PRODUCT_BUNDLE_IDENTIFIER: com.joannewood.Spool
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: U8NA3U6GZF
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: SpoolApp/Resources/SpoolApp.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: SpoolApp/Resources/Info.plist
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Jo Wood."
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+schemes:
+  Spool:
+    build:
+      targets:
+        SpoolApp: all
+    run:
+      config: Debug

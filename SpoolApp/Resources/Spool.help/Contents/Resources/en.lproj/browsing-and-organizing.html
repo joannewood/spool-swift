@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Browsing &amp; Organizing Your Library — Spool Help</title>
+<link rel="stylesheet" href="help.css">
+</head>
+<body>
+<p class="crumb"><a href="index.html">Spool Help</a> &rsaquo; Browsing &amp; Organizing</p>
+<h1>Browsing &amp; Organizing Your Library</h1>
+
+<h2>Grid, list, search, filter, sort</h2>
+<p>Toggle between a thumbnail grid and a compact list from the toolbar. Both share the same
+search field (filenames, tags, and print settings phrases like "0.2mm nozzle" or "20% infill"
+all match), the same sort menu, and the same filter button — a funnel icon that fills in once
+any filter is active. Filters cover file type, tag, star rating, printed status, material,
+printer profile, and slicer.</p>
+<p>A search or filter that matches every file in a project collapses that project into a single
+card instead of listing each file separately — click it to see the full project.</p>
+
+<h2>Selecting and acting on multiple files</h2>
+<p>Click <strong>Select</strong> in the toolbar to check off files, then delete them (moved to
+the Trash — recoverable) or add them to a project all at once. Right-clicking any single file
+gives the same actions individually, plus <strong>Open With</strong> and
+<strong>Reveal in Finder</strong>.</p>
+
+<h2>Keyboard navigation</h2>
+<table>
+<tr><th>Key</th><th>Action</th></tr>
+<tr><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></td><td>Move the focus ring around the grid or list</td></tr>
+<tr><td><kbd>Return</kbd></td><td>Open the focused file or project</td></tr>
+<tr><td><kbd>Delete</kbd></td><td>Delete the focused (or selected) file</td></tr>
+</table>
+
+<h2>The file detail page</h2>
+<p>Click any file to see its full detail page:</p>
+<ul>
+<li><strong>Tags</strong> — free-form labels, click the <strong>+</strong> to add one.</li>
+<li><strong>Projects</strong> — a file can belong to several. Spool auto-suggests a project for
+files that share a folder; suggestions show with an accent tint and a confirm/reject pair until
+you decide. Give a project a flag color from its detail page toolbar to make it stand out in the
+sidebar.</li>
+<li><strong>Related Files</strong> — duplicate/variant/derived-from/newer-version relationships,
+either auto-suggested from matching content or filenames, or added manually via the
+<strong>+</strong>.</li>
+<li><strong>Print Metadata</strong> — material, printer, slicer, and notes. Auto-filled from a
+Bambu 3MF project file or a PrusaSlicer-style gcode footer when Spool can read one; edit and
+click Save to override.</li>
+<li><strong>Printed</strong> — mark a file as printed, rate it, and leave yourself notes on how
+it turned out.</li>
+</ul>
+<p>Renaming a file (the pencil next to its name) only changes how it's <em>labeled</em> inside
+Spool — the real file on disk keeps its actual name.</p>
+
+<div class="note">Tag, project, relationship, and rename edits are all on the system Undo stack
+— <kbd>⌘Z</kbd> to undo, <kbd>⇧⌘Z</kbd> to redo, same as anywhere else on the Mac.</div>
+
+<div class="nav-footer">
+<a href="getting-started.html">← Getting Started</a>
+<a href="duplicates-archives-and-review.html">Reviewing Duplicates &amp; Archives →</a>
+</div>
+</body>
+</html>
