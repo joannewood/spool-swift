@@ -10,6 +10,12 @@ If you've used the original Python/FastAPI/Docker version, this is the same idea
 rebuilt from scratch as a single-process SwiftUI app. See [below](#how-this-relates-to-the-original-spool)
 for how the two relate.
 
+> **Prefer the original, more battle-tested version?** [joannewood/spool](https://github.com/joannewood/spool)
+> is the Python/FastAPI/Postgres/Docker original this was rewritten from. Both are
+> actively maintained.
+
+![Library view](docs/screenshot-library.png)
+
 ## Get it
 
 Grab the latest signed, notarized build from **[Releases](https://github.com/joannewood/spool-swift/releases)**
@@ -34,9 +40,15 @@ Requires **macOS 14 (Sonoma) or later**.
   "cake stand" finds `cake_stand.stl`.
 - **Tags, nestable projects, print metadata** — organize files by hand, or let Spool
   auto-suggest a project for files that share a folder.
+
+  ![Projects view](docs/screenshot-projects.png)
+
 - **Relationships** — link a STEP file to the STL exported from it, or a part to its
   next revision, with auto-suggested `duplicate_of`/`new_version_of`/`derived_from`
   detection based on content hash and filename patterns.
+
+  ![File detail view, showing tags, projects, and suggested relationships](docs/screenshot-detail.png)
+
 - **Archive review** — a `.zip` containing a recognized model file is surfaced for you
   to confirm or dismiss before anything is extracted. `.7z`/`.rar` support is optional
   and opt-in (Settings → General → Archives) since macOS has no native reader for
