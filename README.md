@@ -83,3 +83,7 @@ Python/FastAPI/Postgres/Docker stack that still runs great and is the more
 battle-tested of the two. This repo is a from-scratch native rewrite targeting full
 feature parity, trading Docker/Postgres/a background daemon for a single ordinary
 Mac app. Both are actively maintained; pick whichever fits how you want to run it.
+
+## License
+
+[GPL-3.0](LICENSE), matching the original SPOOL.
