@@ -223,11 +223,30 @@ struct AdminView: View {
                     ForEach(group.files) { file in
                         HStack {
                             VStack(alignment: .leading) {
-                                Text(file.displayName ?? file.filename)
+                                HStack(spacing: 4) {
+                                    Text(file.displayName ?? file.filename)
+                                    // Confirmed live: no icon existed for this anywhere
+                                    // in the app before — read-only status was text-only,
+                                    // so a copy's undeletability only showed up *after*
+                                    // clicking Delete and hitting the error.
+                                    if viewModel.libraryRootIds.contains(file.watchedRootId) {
+                                        Image(systemName: "lock.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .help("In your read-only Library folder — can't be deleted from Spool")
+                                            .accessibilityLabel("Locked: in your read-only Library folder")
+                                    }
+                                }
                                 Text(file.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer()
-                            Button("Delete", role: .destructive) { Task { await viewModel.deleteDuplicate(file) } }
+                            if viewModel.libraryRootIds.contains(file.watchedRootId) {
+                                Button("Delete", role: .destructive) {}
+                                    .disabled(true)
+                                    .help("Can't be deleted — it's in your read-only Library folder")
+                            } else {
+                                Button("Delete", role: .destructive) { Task { await viewModel.deleteDuplicate(file) } }
+                            }
                         }
                     }
                 }

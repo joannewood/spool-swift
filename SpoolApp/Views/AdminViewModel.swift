@@ -17,6 +17,10 @@ struct SuggestedProjectMembershipEntry: Identifiable {
 @MainActor
 final class AdminViewModel: ObservableObject {
     @Published private(set) var duplicateGroups: [DuplicateGroup] = []
+    /// Which watched roots are read-only Library roots — lets the duplicates list show
+    /// a lock icon on a copy that can't be deleted *before* the user tries and hits
+    /// the error, rather than only explaining it after the fact.
+    @Published private(set) var libraryRootIds: Set<Int64> = []
     @Published private(set) var suggestedRelationships: [(relationship: Relationship, fromFile: SpoolFile, toFile: SpoolFile)] = []
     @Published private(set) var suggestedProjectMemberships: [SuggestedProjectMembershipEntry] = []
     @Published private(set) var pendingArchives: [ZipFile] = []
@@ -37,6 +41,8 @@ final class AdminViewModel: ObservableObject {
     func load() async {
         do {
             duplicateGroups = try await environment.duplicates.listDuplicateGroups()
+            let roots = try await environment.watchedRoots.fetchAll()
+            libraryRootIds = Set(roots.filter { $0.kind == .library }.compactMap(\.id))
             try await loadSuggestedRelationships()
             try await loadSuggestedProjectMemberships()
             pendingArchives = try await environment.archiveReview.pendingArchives()

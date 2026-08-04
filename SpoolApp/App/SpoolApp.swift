@@ -65,7 +65,7 @@ struct SpoolApp: App {
             // menu (alongside every other open/openable window), not just a toolbar
             // button that's easy to miss if you don't already know it's there.
             CommandGroup(after: .windowArrangement) {
-                Button("Admin") { openWindow(id: WindowID.admin) }
+                Button("Review") { openWindow(id: WindowID.review) }
                     .keyboardShortcut("a", modifiers: [.command, .option])
             }
         }
@@ -77,7 +77,7 @@ struct SpoolApp: App {
         // `WindowGroup`) guarantees exactly one instance: re-opening it via the
         // toolbar or menu just brings the existing one forward instead of spawning a
         // duplicate, matching how a single-instance Mac utility panel behaves.
-        Window("Admin", id: WindowID.admin) {
+        Window("Review", id: WindowID.review) {
             AdminView(environment: environment)
                 .environmentObject(environment)
         }
@@ -87,7 +87,7 @@ struct SpoolApp: App {
         // item for free — there is no separate command to register for it. `Settings`
         // is a separate Scene from the main WindowGroup, so it doesn't automatically
         // inherit that WindowGroup's environment objects — `rootsViewModel` needs
-        // explicit injection here too, same as `environment` did for the Admin window.
+        // explicit injection here too, same as `environment` did for the Review window.
         Settings {
             SettingsView(environment: environment)
                 .environmentObject(rootsViewModel)
@@ -113,5 +113,5 @@ struct SpoolApp: App {
 
 enum WindowID {
     static let main = "main"
-    static let admin = "admin"
+    static let review = "review"
 }

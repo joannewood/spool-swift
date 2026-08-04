@@ -1,10 +1,10 @@
 import SpoolCore
 import SwiftUI
 
-/// The standard macOS Settings window (⌘,) — split out from the Admin review panel
-/// because these are two different kinds of screens: Admin is an inbox ("here's what
+/// The standard macOS Settings window (⌘,) — split out from the Review panel
+/// because these are two different kinds of screens: Review is an inbox ("here's what
 /// needs a decision right now"), Settings is configuration you set once and forget.
-/// Folding "Sync" into Admin's own sidebar meant ⌘, — the one keyboard shortcut every
+/// Folding "Sync" into Review's own sidebar meant ⌘, — the one keyboard shortcut every
 /// Mac user reaches for instinctively when they want to change how an app behaves —
 /// did nothing at all.
 ///
@@ -14,7 +14,7 @@ import SwiftUI
 /// are closer to "accounts" (compare Mail's Settings → Accounts) than browsable content:
 /// a short, infrequently-changed list you configure rather than navigate, and moving
 /// their management here follows the same "Settings is configuration, not content" split
-/// that separated Admin's review queues from Settings' actual preferences.
+/// that separated Review's queues from Settings' actual preferences.
 struct SettingsView: View {
     @StateObject private var viewModel: SettingsViewModel
     @EnvironmentObject private var rootsViewModel: RootsViewModel

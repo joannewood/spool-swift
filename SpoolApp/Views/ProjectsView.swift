@@ -217,7 +217,10 @@ struct ProjectDetailView: View {
                 .help("Rename this project")
             }
             ToolbarItem {
-                Button("Move to…", systemImage: "folder") { showingMove = true }
+                // "increase.indent" (a nested/hierarchy glyph), not "folder" — this
+                // action is specifically about *nesting* a project under another (or
+                // un-nesting it back to the top level), not a generic file-move.
+                Button("Move to…", systemImage: "increase.indent") { showingMove = true }
                     .help("Make this a sub-project of another, or move it back to the top level")
             }
             ToolbarItem {

@@ -74,16 +74,16 @@ struct ContentView: View {
                     // A real window (opened, not presented) so triaging duplicates/
                     // suggestions/archives doesn't block glancing back at the library —
                     // `Window`'s single-instance guarantee means clicking this again
-                    // while Admin is already open just brings it forward. The overlaid
+                    // while Review is already open just brings it forward. The overlaid
                     // count is the only glance-visible sign of ingestion activity in the
                     // main window at all — everything else about the job queue lives
-                    // behind this button, in Admin. SwiftUI's `.badge()` was considered
+                    // behind this button, in Review. SwiftUI's `.badge()` was considered
                     // instead of this hand-rolled circle, but it only renders inside
                     // List rows/TabView items, not on a bare toolbar Button.
-                    Button("Admin", systemImage: "wrench.and.screwdriver") { openWindow(id: WindowID.admin) }
+                    Button("Review", systemImage: "checklist") { openWindow(id: WindowID.review) }
                         .labelStyle(.iconOnly)
-                        .help(adminButtonHelp)
-                        .accessibilityLabel(adminButtonHelp)
+                        .help(reviewButtonHelp)
+                        .accessibilityLabel(reviewButtonHelp)
                         .overlay(alignment: .topTrailing) {
                             if jobStatus.pendingJobCount > 0 {
                                 Text("\(min(jobStatus.pendingJobCount, 99))")
@@ -139,7 +139,7 @@ struct ContentView: View {
         }
     }
 
-    private var adminButtonHelp: String {
+    private var reviewButtonHelp: String {
         let base = "Review duplicates, suggestions, archives, and settings"
         guard jobStatus.pendingJobCount > 0 else { return base }
         let jobsLabel = jobStatus.pendingJobCount == 1 ? "1 job" : "\(jobStatus.pendingJobCount) jobs"
@@ -215,7 +215,7 @@ struct MenuBarContentView: View {
             Text(statusLine).font(.caption).foregroundStyle(.secondary)
             Divider()
             Button("Open Library") { openLibrary() }
-            Button("Open Admin") { openWindow(id: WindowID.admin) }
+            Button("Open Review") { openWindow(id: WindowID.review) }
             Divider()
             Button("Quit Spool") { NSApp.terminate(nil) }
         }
@@ -233,7 +233,7 @@ struct MenuBarContentView: View {
 
     // `openWindow(id:)` always creates a *new* WindowGroup window rather than
     // bringing an existing one forward (WindowGroup is a group by design, unlike the
-    // singleton `Window` used for Admin) — so this checks for an already-visible
+    // singleton `Window` used for Review) — so this checks for an already-visible
     // library window first and just activates the app in that case, only falling
     // back to `openWindow` for the "closed the last window, app's still running in
     // the background" case this menu exists for in the first place.
@@ -248,7 +248,7 @@ struct MenuBarContentView: View {
     private func hasVisibleLibraryWindow() -> Bool {
         NSApp.windows.contains { window in
             window.isVisible
-                && window.identifier?.rawValue != WindowID.admin
+                && window.identifier?.rawValue != WindowID.review
                 && !(window is NSPanel)
                 && window.styleMask.contains(.titled)
                 && window.styleMask.contains(.resizable)
