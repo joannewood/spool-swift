@@ -37,9 +37,20 @@ struct AdminView: View {
     // shape the main sidebar already uses (and which does work) sidesteps it.
     @State private var selection: AdminSection? = .archives
     @State private var showingDeleteAllDuplicatesConfirmation = false
+    @State private var showingEmptyGroupSelectionWarning = false
     @State private var checkedRelationshipIds: Set<Int64> = []
     @State private var checkedProjectMembershipKeys: Set<String> = []
     @State private var checkedArchiveIds: Set<Int64> = []
+    @State private var checkedRejectedArchiveIds: Set<Int64> = []
+    @State private var checkedDuplicateFileIds: Set<Int64> = []
+    // Window(id:) scenes on macOS keep this view (and its @StateObject) alive across
+    // close/reopen — closing is just an NSWindow order-out, not a real teardown — so
+    // `.task` (which only fires once per view identity) never refires on reopen and
+    // the queues go stale. `controlActiveState` does track per-window key status
+    // across that same close/reopen, so reloading on every transition to `.key`
+    // covers both the very first open (paired with `.task` below) and every later
+    // reopen or refocus.
+    @Environment(\.controlActiveState) private var controlActiveState
 
     init(environment: AppEnvironment) {
         _viewModel = StateObject(wrappedValue: AdminViewModel(environment: environment))
@@ -120,6 +131,10 @@ struct AdminView: View {
         .task { await viewModel.load() }
         .task(id: selection) {
             if selection == .status { await viewModel.loadStatus() }
+        }
+        .onChange(of: controlActiveState) { _, newValue in
+            guard newValue == .key else { return }
+            Task { await viewModel.load() }
         }
         // See SettingsView's identical fix — `.constant()` here is a real, confirmed
         // trigger for "Publishing changes from within view updates is not allowed".
@@ -215,13 +230,100 @@ struct AdminView: View {
         }
     }
 
+    /// Every duplicate file across every group, minus the ones Spool can never
+    /// delete — "Select All"/"Delete Selected" only ever operate on files that could
+    /// actually be deleted, same as the per-row Delete button already being disabled
+    /// for a Library copy.
+    private var deletableDuplicateFiles: [SpoolFile] {
+        viewModel.duplicateGroups.flatMap(\.files).filter { !viewModel.libraryRootIds.contains($0.watchedRootId) }
+    }
+
+    /// Groups where the current manual checkbox selection covers every file in the
+    /// group — i.e. "Delete Selected" would leave zero copies, not "all but one"
+    /// like "Delete All Extra Copies" always guarantees. A group with any Library
+    /// copy can never appear here, since a Library file's checkbox is disabled and
+    /// so can never be part of the selection.
+    private var duplicateGroupsFullyEmptiedBySelection: [DuplicateGroup] {
+        viewModel.duplicateGroups.filter { group in
+            !group.files.isEmpty && group.files.allSatisfy { checkedDuplicateFileIds.contains($0.id ?? -1) }
+        }
+    }
+
     private var duplicatesSection: some View {
         Section("Duplicate Files (\(viewModel.duplicateGroups.count))") {
+            // Same "explain the destructive bulk action before the bar" placement as
+            // `pendingArchivesSection` — but this queue needs it more: "Delete
+            // Selected"/"Delete All" here are two different safety levels ("All"
+            // always keeps one copy per group; "Selected" deletes exactly what's
+            // checked, which *can* be every copy of a file if you check them all
+            // yourself), not just two counts over the same underlying action like
+            // every other queue's Selected/All pair.
+            Text("\"Delete All Extra Copies\" always keeps one file per group — the oldest, or your Library copy. \"Delete Selected\" deletes exactly what you've checked, which can empty a group entirely if you check every copy yourself.")
+                .font(.caption).foregroundStyle(.secondary)
+            // Bar comes first, matching every other bulk-review queue — see
+            // `suggestedRelationshipsSection`'s comment for why.
+            BulkActionBar(
+                totalCount: viewModel.duplicateFilesEligibleForAutoCleanup,
+                selectedCount: checkedDuplicateFileIds.count,
+                allSelected: !deletableDuplicateFiles.isEmpty && checkedDuplicateFileIds.count == deletableDuplicateFiles.count,
+                actionLabel: "Delete",
+                allActionLabel: "Delete All Extra Copies",
+                destructive: true,
+                onToggleSelectAll: { checkedDuplicateFileIds = $0 ? Set(deletableDuplicateFiles.compactMap(\.id)) : [] },
+                onActionSelected: {
+                    // Selecting every copy in a group is easy to do without meaning
+                    // to (e.g. "Select All" across a library with one big group) —
+                    // catch it here rather than silently leaving zero copies behind.
+                    if !duplicateGroupsFullyEmptiedBySelection.isEmpty {
+                        showingEmptyGroupSelectionWarning = true
+                    } else {
+                        let files = deletableDuplicateFiles.filter { checkedDuplicateFileIds.contains($0.id ?? -1) }
+                        Task {
+                            await viewModel.deleteSelectedDuplicates(files)
+                            checkedDuplicateFileIds = []
+                        }
+                    }
+                },
+                onActionAll: { showingDeleteAllDuplicatesConfirmation = true }
+            )
+            .confirmationDialog(
+                "Delete every extra copy across all \(viewModel.duplicateGroups.count) duplicate groups?",
+                isPresented: $showingDeleteAllDuplicatesConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete All", role: .destructive) { Task { await viewModel.deleteAllDuplicates(); checkedDuplicateFileIds = [] } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Keeps one copy per group — the oldest, or the one in your read-only Library folder if there is one — and moves every other copy to the Trash.")
+            }
+            .confirmationDialog(
+                duplicateGroupsFullyEmptiedBySelection.count == 1
+                    ? "Delete every copy of this file?"
+                    : "Delete every copy of \(duplicateGroupsFullyEmptiedBySelection.count) files?",
+                isPresented: $showingEmptyGroupSelectionWarning,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Anyway", role: .destructive) {
+                    let files = deletableDuplicateFiles.filter { checkedDuplicateFileIds.contains($0.id ?? -1) }
+                    Task {
+                        await viewModel.deleteSelectedDuplicates(files)
+                        checkedDuplicateFileIds = []
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your selection includes every copy in \(duplicateGroupsFullyEmptiedBySelection.count == 1 ? "one group" : "\(duplicateGroupsFullyEmptiedBySelection.count) groups") — none would be left, unlike \"Delete All Extra Copies,\" which always keeps one. They'll still go to the Trash, so this is recoverable there.")
+            }
             ForEach(viewModel.duplicateGroups) { group in
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(group.files.count) copies").font(.caption).foregroundStyle(.secondary)
                     ForEach(group.files) { file in
                         HStack {
+                            let isLocked = viewModel.libraryRootIds.contains(file.watchedRootId)
+                            Toggle("", isOn: checkedBinding(file.id, in: $checkedDuplicateFileIds))
+                                .labelsHidden()
+                                .toggleStyle(.checkbox)
+                                .disabled(isLocked)
                             VStack(alignment: .leading) {
                                 HStack(spacing: 4) {
                                     Text(file.displayName ?? file.filename)
@@ -229,7 +331,7 @@ struct AdminView: View {
                                     // in the app before — read-only status was text-only,
                                     // so a copy's undeletability only showed up *after*
                                     // clicking Delete and hitting the error.
-                                    if viewModel.libraryRootIds.contains(file.watchedRootId) {
+                                    if isLocked {
                                         Image(systemName: "lock.fill")
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
@@ -240,7 +342,7 @@ struct AdminView: View {
                                 Text(file.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer()
-                            if viewModel.libraryRootIds.contains(file.watchedRootId) {
+                            if isLocked {
                                 Button("Delete", role: .destructive) {}
                                     .disabled(true)
                                     .help("Can't be deleted — it's in your read-only Library folder")
@@ -251,28 +353,34 @@ struct AdminView: View {
                     }
                 }
             }
-            Button("Delete All Extra Copies…", role: .destructive) { showingDeleteAllDuplicatesConfirmation = true }
-                .confirmationDialog(
-                    "Delete every extra copy across all \(viewModel.duplicateGroups.count) duplicate groups?",
-                    isPresented: $showingDeleteAllDuplicatesConfirmation,
-                    titleVisibility: .visible
-                ) {
-                    Button("Delete All", role: .destructive) { Task { await viewModel.deleteAllDuplicates() } }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Keeps one copy per group — the oldest, or the one in your read-only Library folder if there is one — and moves every other copy to the Trash.")
-                }
         }
     }
 
     private var suggestedRelationshipsSection: some View {
         Section("Suggested Relationships (\(viewModel.suggestedRelationships.count))") {
+            // Bar comes first, not last — with a long queue the actions used to sit
+            // below every row, so acting on a bulk selection meant scrolling all the
+            // way down first.
+            BulkActionBar(
+                totalCount: viewModel.suggestedRelationships.count,
+                selectedCount: checkedRelationshipIds.count,
+                allSelected: !viewModel.suggestedRelationships.isEmpty && checkedRelationshipIds.count == viewModel.suggestedRelationships.count,
+                onToggleSelectAll: { checkedRelationshipIds = $0 ? Set(viewModel.suggestedRelationships.compactMap(\.relationship.id)) : [] },
+                onActionSelected: {
+                    let ids = checkedRelationshipIds
+                    Task {
+                        await viewModel.confirmSelectedRelationships(ids: ids)
+                        checkedRelationshipIds = []
+                    }
+                },
+                onActionAll: { Task { await viewModel.confirmAllRelationships(); checkedRelationshipIds = [] } }
+            )
             ForEach(viewModel.suggestedRelationships, id: \.relationship.id) { pair in
                 HStack {
-                    Toggle("", isOn: checkedBinding(pair.relationship.id, in: $checkedRelationshipIds)).labelsHidden()
-                    Text("\(pair.fromFile.filename) \(pair.relationship.type.rawValue.replacingOccurrences(of: "_", with: " ")) \(pair.toFile.filename)")
-                        .lineLimit(1)
-                        .suggestionTint()
+                    Toggle("", isOn: checkedBinding(pair.relationship.id, in: $checkedRelationshipIds))
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
+                    relationshipSuggestionText(pair).lineLimit(1)
                     Spacer()
                     ConfirmRejectButtons(
                         onConfirm: { Task { await viewModel.confirmRelationship(pair.relationship) } },
@@ -280,41 +388,17 @@ struct AdminView: View {
                     )
                 }
             }
-            BulkActionBar(
-                totalCount: viewModel.suggestedRelationships.count,
-                selectedCount: checkedRelationshipIds.count,
-                allSelected: !viewModel.suggestedRelationships.isEmpty && checkedRelationshipIds.count == viewModel.suggestedRelationships.count,
-                onToggleSelectAll: { checkedRelationshipIds = $0 ? Set(viewModel.suggestedRelationships.compactMap(\.relationship.id)) : [] },
-                onConfirmSelected: {
-                    Task {
-                        await viewModel.confirmSelectedRelationships(ids: checkedRelationshipIds)
-                        checkedRelationshipIds = []
-                    }
-                },
-                onConfirmAll: { Task { await viewModel.confirmAllRelationships(); checkedRelationshipIds = [] } }
-            )
         }
     }
 
     private var suggestedProjectsSection: some View {
         Section("Suggested Projects (\(viewModel.suggestedProjectMemberships.count))") {
-            ForEach(viewModel.suggestedProjectMemberships) { entry in
-                HStack {
-                    Toggle("", isOn: checkedBinding(entry.id, in: $checkedProjectMembershipKeys)).labelsHidden()
-                    Text("\(entry.file.filename) → \(entry.project.name)").lineLimit(1).suggestionTint()
-                    Spacer()
-                    ConfirmRejectButtons(
-                        onConfirm: { Task { await viewModel.confirmProjectMembership(entry.membership) } },
-                        onReject: { Task { await viewModel.rejectProjectMembership(entry.membership) } }
-                    )
-                }
-            }
             BulkActionBar(
                 totalCount: viewModel.suggestedProjectMemberships.count,
                 selectedCount: checkedProjectMembershipKeys.count,
                 allSelected: !viewModel.suggestedProjectMemberships.isEmpty && checkedProjectMembershipKeys.count == viewModel.suggestedProjectMemberships.count,
                 onToggleSelectAll: { checkedProjectMembershipKeys = $0 ? Set(viewModel.suggestedProjectMemberships.map(\.id)) : [] },
-                onConfirmSelected: {
+                onActionSelected: {
                     let pairs = viewModel.suggestedProjectMemberships
                         .filter { checkedProjectMembershipKeys.contains($0.id) }
                         .map { (projectId: $0.membership.projectId, fileId: $0.membership.fileId) }
@@ -323,16 +407,64 @@ struct AdminView: View {
                         checkedProjectMembershipKeys = []
                     }
                 },
-                onConfirmAll: { Task { await viewModel.confirmAllProjectMemberships(); checkedProjectMembershipKeys = [] } }
+                onActionAll: { Task { await viewModel.confirmAllProjectMemberships(); checkedProjectMembershipKeys = [] } }
             )
+            ForEach(viewModel.suggestedProjectMemberships) { entry in
+                HStack {
+                    Toggle("", isOn: checkedBinding(entry.id, in: $checkedProjectMembershipKeys))
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
+                    projectSuggestionText(entry).lineLimit(1)
+                    Spacer()
+                    ConfirmRejectButtons(
+                        onConfirm: { Task { await viewModel.confirmProjectMembership(entry.membership) } },
+                        onReject: { Task { await viewModel.rejectProjectMembership(entry.membership) } }
+                    )
+                }
+            }
         }
+    }
+
+    /// A uniformly-tinted row reads as one indistinct blob when scanning a long bulk
+    /// queue — the two filenames (the thing you're actually deciding about) need to
+    /// outrank the relationship type between them, not match it. Filenames stay
+    /// `.primary`/emphasized; the connecting phrase is `.secondary` and untinted, so
+    /// it recedes the way "and"/"→" would in running text.
+    private func relationshipSuggestionText(_ pair: (relationship: Relationship, fromFile: SpoolFile, toFile: SpoolFile)) -> Text {
+        Text(pair.fromFile.filename).fontWeight(.medium).foregroundColor(.primary)
+        + Text(" \(pair.relationship.type.rawValue.replacingOccurrences(of: "_", with: " ")) ").foregroundColor(.secondary)
+        + Text(pair.toFile.filename).fontWeight(.medium).foregroundColor(.primary)
+    }
+
+    private func projectSuggestionText(_ entry: SuggestedProjectMembershipEntry) -> Text {
+        Text(entry.file.filename).fontWeight(.medium).foregroundColor(.primary)
+        + Text(" → ").foregroundColor(.secondary)
+        + Text(entry.project.name).fontWeight(.medium).foregroundColor(.primary)
     }
 
     private var pendingArchivesSection: some View {
         Section("Pending Archives (\(viewModel.pendingArchives.count))") {
+            Text("Confirming extracts the archive into its folder and deletes the original — there's no undo. If you're not sure, reject it (you can always un-reject it below).")
+                .font(.caption).foregroundStyle(.secondary)
+            BulkActionBar(
+                totalCount: viewModel.pendingArchives.count,
+                selectedCount: checkedArchiveIds.count,
+                allSelected: !viewModel.pendingArchives.isEmpty && checkedArchiveIds.count == viewModel.pendingArchives.count,
+                onToggleSelectAll: { checkedArchiveIds = $0 ? Set(viewModel.pendingArchives.compactMap(\.id)) : [] },
+                onActionSelected: {
+                    let ids = checkedArchiveIds
+                    Task {
+                        await viewModel.confirmSelectedArchives(ids: ids)
+                        checkedArchiveIds = []
+                    }
+                },
+                onActionAll: { Task { await viewModel.confirmAllArchives(); checkedArchiveIds = [] } }
+            )
             ForEach(viewModel.pendingArchives) { zip in
                 HStack {
-                    Toggle("", isOn: checkedBinding(zip.id, in: $checkedArchiveIds)).labelsHidden()
+                    Toggle("", isOn: checkedBinding(zip.id, in: $checkedArchiveIds))
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
                     VStack(alignment: .leading) {
                         Text(zip.filename)
                         Text(zip.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -346,21 +478,6 @@ struct AdminView: View {
                     )
                 }
             }
-            BulkActionBar(
-                totalCount: viewModel.pendingArchives.count,
-                selectedCount: checkedArchiveIds.count,
-                allSelected: !viewModel.pendingArchives.isEmpty && checkedArchiveIds.count == viewModel.pendingArchives.count,
-                onToggleSelectAll: { checkedArchiveIds = $0 ? Set(viewModel.pendingArchives.compactMap(\.id)) : [] },
-                onConfirmSelected: {
-                    Task {
-                        await viewModel.confirmSelectedArchives(ids: checkedArchiveIds)
-                        checkedArchiveIds = []
-                    }
-                },
-                onConfirmAll: { Task { await viewModel.confirmAllArchives(); checkedArchiveIds = [] } }
-            )
-            Text("Confirming extracts the archive into its folder and deletes the original — there's no undo. If you're not sure, reject it (you can always un-reject it below).")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -376,36 +493,55 @@ struct AdminView: View {
 
     private var unsupportedArchivesSection: some View {
         Section("Archives Spool Can't Inspect (\(viewModel.unsupportedArchives.count))") {
+            // No native/pure-Swift .7z/.rar reader exists, and — confirmed live —
+            // there's no way to run an external `unar`/`7z` from inside App Sandbox
+            // either (file *read* access via a security-scoped bookmark doesn't extend
+            // to *execute* rights). Rather than a dead-end "configure a tool" flow, this
+            // just tells the user to extract it themselves; Spool picks up the
+            // extracted files the normal way, and this row disappears on its own once
+            // the original archive is deleted (`RescanService`'s missing-zip sweep).
+            Text("Spool can't look inside .7z/.rar archives directly. Extract this one yourself — in Finder, or with whatever unarchiver you have — and Spool will pick up the extracted files automatically. Once you delete the original archive, it disappears from this list.")
+                .font(.caption).foregroundStyle(.secondary)
             ForEach(viewModel.unsupportedArchives) { zip in
                 HStack {
-                    Text(zip.filename).lineLimit(1)
+                    VStack(alignment: .leading) {
+                        Text(zip.filename).lineLimit(1)
+                        Text(zip.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
                     Spacer()
-                    // Staged unsupported because no tool was available *at the time* —
-                    // configuring one afterward (or restarting once one's configured)
-                    // never automatically re-inspects an already-known row, so this is
-                    // the only way an archive dropped before that point ever becomes
-                    // reviewable without deleting and re-adding it.
-                    Button("Check Again") { Task { await viewModel.recheckUnsupportedArchive(zip) } }
-                        .help("Re-check now that an external tool may be configured")
+                    Button { OpenInAppService.revealInFinder(fileURL: URL(fileURLWithPath: zip.path)) } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reveal in Finder")
+                    .accessibilityLabel("Reveal \(zip.filename) in Finder")
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                // Installing the tool alone doesn't do anything — the sandboxed app has
-                // no access to a fixed path like /opt/homebrew/bin/unar until it's
-                // explicitly granted via the Settings picker (see ArchiveToolLocator).
-                // The old wording stopped at "install unar," which left that second,
-                // required step invisible.
-                Text("Install unar or 7z (e.g. `brew install unar`), then locate its folder in Settings to let Spool look inside .7z/.rar archives.")
-                SettingsLink { Text("Open Settings…") }
-            }
-            .font(.caption).foregroundStyle(.secondary)
         }
     }
 
     private var rejectedArchivesSection: some View {
         Section("Rejected Archives (\(viewModel.rejectedArchives.count))") {
+            BulkActionBar(
+                totalCount: viewModel.rejectedArchives.count,
+                selectedCount: checkedRejectedArchiveIds.count,
+                allSelected: !viewModel.rejectedArchives.isEmpty && checkedRejectedArchiveIds.count == viewModel.rejectedArchives.count,
+                actionLabel: "Un-reject",
+                onToggleSelectAll: { checkedRejectedArchiveIds = $0 ? Set(viewModel.rejectedArchives.compactMap(\.id)) : [] },
+                onActionSelected: {
+                    let ids = checkedRejectedArchiveIds
+                    Task {
+                        await viewModel.unrejectSelectedArchives(ids: ids)
+                        checkedRejectedArchiveIds = []
+                    }
+                },
+                onActionAll: { Task { await viewModel.unrejectAllArchives(); checkedRejectedArchiveIds = [] } }
+            )
             ForEach(viewModel.rejectedArchives) { zip in
                 HStack {
+                    Toggle("", isOn: checkedBinding(zip.id, in: $checkedRejectedArchiveIds))
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
                     Text(zip.filename).lineLimit(1)
                     Spacer()
                     Button { Task { await viewModel.unrejectArchive(zip) } } label: {
@@ -429,18 +565,35 @@ private struct BulkActionBar: View {
     let totalCount: Int
     let selectedCount: Int
     let allSelected: Bool
+    /// The verb this bar's two buttons perform — "Confirm" for every suggestion/
+    /// archive queue, "Delete" for duplicates, "Un-reject"/"Check Again" for the
+    /// archive sub-queues. Every queue gets the exact same Select All / "<verb>
+    /// Selected (N)" / "<verb> All (N)" shape rather than each inventing its own.
+    var actionLabel: String = "Confirm"
+    /// Overrides just the "All" button's phrase (still followed by " (N)") when
+    /// "<verb> All" alone would be read as "act on literally every row" rather than
+    /// what it actually does — duplicates' "All" keeps one copy per group, so it
+    /// says "Delete All Extra Copies" instead of the generic "Delete All". Every
+    /// other queue's "All" really does mean every row, so they leave this nil.
+    var allActionLabel: String? = nil
+    var destructive: Bool = false
     let onToggleSelectAll: (Bool) -> Void
-    let onConfirmSelected: () -> Void
-    let onConfirmAll: () -> Void
+    let onActionSelected: () -> Void
+    let onActionAll: () -> Void
 
     var body: some View {
         HStack {
             Toggle("Select All", isOn: Binding(get: { allSelected }, set: onToggleSelectAll))
                 .toggleStyle(.checkbox)
             Spacer()
-            Button("Confirm Selected (\(selectedCount))", action: onConfirmSelected)
+            Button("\(actionLabel) Selected (\(selectedCount))", role: destructive ? .destructive : nil, action: onActionSelected)
                 .disabled(selectedCount == 0)
-            Button("Confirm All (\(totalCount))", action: onConfirmAll)
+            // A fixed gap, not just HStack's default spacing — "<verb> Selected"'s
+            // label width changes every time a checkbox is toggled, and without this
+            // a click aimed at it right after a toggle can land on "<verb> All"
+            // instead, silently acting on everything rather than the selection.
+            Divider().frame(height: 12).padding(.horizontal, 4)
+            Button("\(allActionLabel ?? "\(actionLabel) All") (\(totalCount))", role: destructive ? .destructive : nil, action: onActionAll)
                 .disabled(totalCount == 0)
         }
         .font(.caption)

@@ -27,6 +27,11 @@ struct LibraryGridView: View {
     @State private var gridContentWidth: CGFloat = 0
     @State private var isDropTargeted = false
     @State private var importAlertMessage: String?
+    /// Populated on demand (first time a project is selected-all'd or toggled), not
+    /// eagerly for every visible project card — `ProjectSearchCard` itself carries no
+    /// file-id list, so this is the one place that cost is paid, and only once per
+    /// project per session since membership doesn't change under the grid's feet.
+    @State private var projectFileIdsCache: [Int64: [Int64]] = [:]
 
     private var viewMode: LibraryViewMode { LibraryViewMode(rawValue: viewModeRaw) ?? .grid }
 
@@ -125,6 +130,21 @@ struct LibraryGridView: View {
                 }
                 .help(isSelecting ? "Exit selection" : "Select multiple files to delete or add to a project")
             }
+            if isSelecting {
+                ToolbarItem {
+                    Button(selectedFileIds.isEmpty ? "Select All" : "Deselect All") {
+                        if selectedFileIds.isEmpty {
+                            Task { await selectAll() }
+                        } else {
+                            selectedFileIds = []
+                        }
+                    }
+                    .help(selectedFileIds.isEmpty
+                        ? "Select every file shown, including every file in a matching project"
+                        : "Clear the current selection")
+                    .disabled(libraryViewModel.items.isEmpty)
+                }
+            }
             ToolbarItem {
                 FilterMenuButton(libraryViewModel: libraryViewModel)
             }
@@ -173,7 +193,7 @@ struct LibraryGridView: View {
             }
             .disabled(selectedFileIds.isEmpty || projectsViewModel.allProjects.isEmpty)
             .fixedSize()
-            Button("Delete", role: .destructive) { showingDeleteConfirmation = true }
+            Button("Delete…", role: .destructive) { showingDeleteConfirmation = true }
                 .disabled(selectedFileIds.isEmpty)
         }
         .padding()
@@ -189,14 +209,79 @@ struct LibraryGridView: View {
         }
     }
 
+    /// A project card in the grid is a collapsed stand-in for every file inside it —
+    /// membership, not the card itself, so "selecting" one means resolving and adding
+    /// its actual file ids, same as if you'd multi-selected them individually.
+    private func fileIds(forProjectId projectId: Int64) async -> [Int64] {
+        if let cached = projectFileIdsCache[projectId] { return cached }
+        let files = (try? await environment.projects.confirmedFiles(inProjectId: projectId)) ?? []
+        let ids = files.compactMap(\.id)
+        projectFileIdsCache[projectId] = ids
+        return ids
+    }
+
+    private func toggleProjectSelection(_ card: ProjectSearchCard) async {
+        let ids = await fileIds(forProjectId: card.projectId)
+        guard !ids.isEmpty else { return }
+        if ids.allSatisfy({ selectedFileIds.contains($0) }) {
+            selectedFileIds.subtract(ids)
+        } else {
+            selectedFileIds.formUnion(ids)
+        }
+    }
+
+    private func selectAll() async {
+        var ids: Set<Int64> = []
+        for item in libraryViewModel.items {
+            switch item {
+            case .file(let file):
+                if let id = file.id { ids.insert(id) }
+            case .project(let card):
+                ids.formUnion(await fileIds(forProjectId: card.projectId))
+            }
+        }
+        selectedFileIds = ids
+    }
+
     private func deleteSelected() async {
         _ = try? await environment.files.deleteFiles(fileIds: Array(selectedFileIds))
         selectedFileIds = []
         isSelecting = false
     }
 
+    /// A project card that's fully checked off represents the *project*, not a loose
+    /// pile of its files — "Add to Project" on that selection nests it as a
+    /// sub-project (same operation as `ProjectsView`'s "Move to Another Project"),
+    /// rather than just cross-listing its files as members of the target too. Only
+    /// files that were selected individually (not swept in by a fully-selected
+    /// project) get added as plain members.
     private func addSelected(toProjectId projectId: Int64) async {
-        try? await environment.projects.addFiles(fileIds: Array(selectedFileIds), toProjectId: projectId)
+        let fullySelectedProjectIds = libraryViewModel.items.compactMap { item -> Int64? in
+            guard case .project(let card) = item,
+                  let ids = projectFileIdsCache[card.projectId], !ids.isEmpty,
+                  ids.allSatisfy({ selectedFileIds.contains($0) }) else { return nil }
+            return card.projectId
+        }
+        let nestedFileIds = Set(fullySelectedProjectIds.flatMap { projectFileIdsCache[$0] ?? [] })
+        let looseFileIds = selectedFileIds.subtracting(nestedFileIds)
+
+        var didReparent = false
+        for sourceProjectId in fullySelectedProjectIds {
+            // Same cycle guard as `MoveProjectSheet`'s candidate list — nesting a
+            // project into itself or one of its own descendants would corrupt the tree.
+            guard sourceProjectId != projectId,
+                  !projectsViewModel.descendantIds(of: sourceProjectId).contains(projectId) else { continue }
+            try? await environment.projects.reparent(projectId: sourceProjectId, toParentId: projectId)
+            didReparent = true
+        }
+        if !looseFileIds.isEmpty {
+            try? await environment.projects.addFiles(fileIds: Array(looseFileIds), toProjectId: projectId)
+        }
+        // `ProjectsViewModel.allProjects` is a plain loaded-once snapshot (see its own
+        // `reparent(_:toParentId:)`) — going through `environment.projects` directly
+        // above bypasses that cache, so the sidebar tree would keep showing the
+        // now-nested project at the top level until something else happened to reload it.
+        if didReparent { await projectsViewModel.load() }
         selectedFileIds = []
         isSelecting = false
     }
@@ -267,14 +352,25 @@ struct LibraryGridView: View {
                                 .onDrag { fileDragItemProvider(for: file) }
                             }
                         case .project(let card):
-                            Button(action: { selection = .project(card.projectId) }) {
-                                ProjectSearchResultCard(
-                                    card: card, thumbnailsDirectory: environment.thumbnailsDirectory,
-                                    isFocused: item.id == focusedItemId
-                                )
+                            if isSelecting {
+                                Button(action: { Task { await toggleProjectSelection(card) } }) {
+                                    ProjectSearchResultCard(
+                                        card: card, thumbnailsDirectory: environment.thumbnailsDirectory,
+                                        isFocused: item.id == focusedItemId
+                                    )
+                                    .overlay(alignment: .topTrailing) { projectSelectionBadge(for: card) }
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(card.name), \(card.fileCount) files")
+                            } else {
+                                Button(action: { selection = .project(card.projectId) }) {
+                                    ProjectSearchResultCard(
+                                        card: card, thumbnailsDirectory: environment.thumbnailsDirectory,
+                                        isFocused: item.id == focusedItemId
+                                    )
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isSelecting)
                         }
                     }
                 }
@@ -320,7 +416,11 @@ struct LibraryGridView: View {
                 navigationPath.append(file.id ?? -1)
             }
         case .project(let card):
-            selection = .project(card.projectId)
+            if isSelecting {
+                Task { await toggleProjectSelection(card) }
+            } else {
+                selection = .project(card.projectId)
+            }
         }
         return true
     }
@@ -394,6 +494,23 @@ struct LibraryGridView: View {
             .padding(6)
     }
 
+    /// "Selected" for a project card means every one of its files is currently in
+    /// `selectedFileIds` — read from `projectFileIdsCache` only, so this stays a plain
+    /// synchronous computed view; the cache is populated the first time this project
+    /// is toggled or a "Select All" pass runs, and stays unselected-looking until then.
+    @ViewBuilder
+    private func projectSelectionBadge(for card: ProjectSearchCard) -> some View {
+        let isSelected = projectFileIdsCache[card.projectId].map { ids in
+            !ids.isEmpty && ids.allSatisfy { selectedFileIds.contains($0) }
+        } ?? false
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.title3)
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, isSelected ? Color.accentColor : Color.secondary)
+            .background(Circle().fill(isSelected ? Color.clear : .white).padding(2))
+            .padding(6)
+    }
+
     private var listBody: some View {
         // The `selection:` binding is what gets List's native arrow-key/type-ahead
         // navigation for free — the same `focusedItemId` the grid drives manually,
@@ -419,11 +536,21 @@ struct LibraryGridView: View {
                     .onDrag { fileDragItemProvider(for: file) }
                 }
             case .project(let card):
-                Button(action: { selection = .project(card.projectId) }) {
-                    ProjectSearchResultListRow(card: card, thumbnailsDirectory: environment.thumbnailsDirectory)
+                if isSelecting {
+                    Button(action: { Task { await toggleProjectSelection(card) } }) {
+                        HStack {
+                            projectSelectionBadge(for: card)
+                            ProjectSearchResultListRow(card: card, thumbnailsDirectory: environment.thumbnailsDirectory)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(card.name), \(card.fileCount) files")
+                } else {
+                    Button(action: { selection = .project(card.projectId) }) {
+                        ProjectSearchResultListRow(card: card, thumbnailsDirectory: environment.thumbnailsDirectory)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .disabled(isSelecting)
             }
         }
         .listStyle(.inset)
@@ -795,6 +922,12 @@ private struct FilterPopoverContent: View {
                 Button("Clear All Filters") { libraryViewModel.filters = LibraryFilters() }
             }
         }
+        // Checking zero or more filters from a list, same as every multi-select
+        // review queue elsewhere — a checkbox, not a settings-style switch. Applied
+        // once here rather than per-`Toggle` since it cascades through the
+        // environment to every `Toggle` in the Form (the type/tag/rating ones —
+        // Printed/Material/Printer/Slicer above are `Picker`s, unaffected).
+        .toggleStyle(.checkbox)
         .formStyle(.grouped)
         .frame(width: 300, height: 420)
     }

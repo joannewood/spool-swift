@@ -15,6 +15,7 @@ struct FileDetailView: View {
     @State private var renameText = ""
     @FocusState private var isAddTagFocused: Bool
     @FocusState private var isPrintLogCommentsFocused: Bool
+    @FocusState private var isRenameFieldFocused: Bool
 
     init(file: SpoolFile, environment: AppEnvironment) {
         _viewModel = StateObject(wrappedValue: FileDetailViewModel(file: file, environment: environment))
@@ -98,21 +99,30 @@ struct FileDetailView: View {
         ), actions: {
             Button("OK") { viewModel.lastError = nil }
         }, message: { Text(viewModel.lastError ?? "") })
-        .alert("Rename", isPresented: $isRenaming) {
-            TextField("Name", text: $renameText)
-            Button("Save") {
-                let previousName = viewModel.file.displayName ?? ""
-                let newName = renameText
-                performAndRegisterUndo(
-                    actionName: "Rename",
-                    forward: { await viewModel.rename(to: newName) },
-                    backward: { await viewModel.rename(to: previousName) }
-                )
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Only how it's shown in Spool changes — the file on disk keeps its real name.")
-        }
+    }
+
+    private func startRenaming() {
+        renameText = viewModel.file.displayName ?? viewModel.file.filename
+        isRenaming = true
+        isRenameFieldFocused = true
+    }
+
+    /// Commits the in-place rename field — Enter (`.onSubmit`) or simply clicking
+    /// away (the `.onChange(of: isRenameFieldFocused)` below) both land here, so
+    /// `isRenaming` is flipped off first to make a second call from the other path a
+    /// no-op rather than double-committing. Escape cancels via `.onExitCommand`
+    /// instead, which never calls this.
+    private func commitRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        let previousName = viewModel.file.displayName ?? viewModel.file.filename
+        let newName = renameText.trimmingCharacters(in: .whitespaces)
+        guard !newName.isEmpty, newName != previousName else { return }
+        performAndRegisterUndo(
+            actionName: "Rename",
+            forward: { await viewModel.rename(to: newName) },
+            backward: { await viewModel.rename(to: previousName) }
+        )
     }
 
     private var header: some View {
@@ -123,16 +133,31 @@ struct FileDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Text(viewModel.file.displayName ?? viewModel.file.filename).font(.title2).bold()
-                    Button(action: {
-                        renameText = viewModel.file.displayName ?? viewModel.file.filename
-                        isRenaming = true
-                    }) {
-                        Image(systemName: "pencil")
+                    // In-place, not a pop-up alert — click the pencil (or the name
+                    // itself), the title becomes an editable field right where it
+                    // already was, Finder/Xcode-style. Enter or clicking away saves;
+                    // Escape (`.onExitCommand`) discards without asking.
+                    if isRenaming {
+                        TextField("Name", text: $renameText)
+                            .textFieldStyle(.plain)
+                            .font(.title2).bold()
+                            .focused($isRenameFieldFocused)
+                            .onSubmit { commitRename() }
+                            .onExitCommand { isRenaming = false }
+                            .onChange(of: isRenameFieldFocused) { _, focused in
+                                if !focused { commitRename() }
+                            }
+                    } else {
+                        Text(viewModel.file.displayName ?? viewModel.file.filename).font(.title2).bold()
+                        // A real Button, not a bare `.onTapGesture` on the Text above —
+                        // see the identical reasoning on the star-rating buttons below.
+                        Button(action: startRenaming) {
+                            Image(systemName: "pencil")
+                        }
+                        .buttonStyle(.plain)
+                        .help("Rename (only how it's shown in Spool — the file on disk is never touched)")
+                        .accessibilityLabel("Rename")
                     }
-                    .buttonStyle(.plain)
-                    .help("Rename (only how it's shown in Spool — the file on disk is never touched)")
-                    .accessibilityLabel("Rename")
                 }
                 Text(viewModel.file.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 if let x = viewModel.file.bboxX, let y = viewModel.file.bboxY, let z = viewModel.file.bboxZ {
@@ -311,6 +336,11 @@ struct FileDetailView: View {
                     Image(systemName: "plus.circle")
                 }
                 .menuStyle(.borderlessButton)
+                // Without this, a `Menu`'s default disclosure chevron sits next to
+                // the icon, throwing this "+" out of alignment with Tags' and
+                // Related Files' plain-`Button` "+" right above and below it —
+                // clicking still opens the same dropdown either way.
+                .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Add to a project")
                 .accessibilityLabel("Add to a project")
@@ -429,14 +459,19 @@ struct FileDetailView: View {
                     .lineLimit(2...4)
                     .focused($isPrintLogCommentsFocused)
             }
-            HStack {
-                Spacer()
-                Button("Save") {
-                    isPrintLogCommentsFocused = false
-                    Task { await viewModel.savePrintLog() }
+            // Only while there's something to save — was always visible before, so
+            // it sat there whether or not the checkbox (or rating/notes) had actually
+            // changed from what's already saved.
+            if viewModel.hasUnsavedPrintLogChanges {
+                HStack {
+                    Spacer()
+                    Button("Save") {
+                        isPrintLogCommentsFocused = false
+                        Task { await viewModel.savePrintLog() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
             }
         }
     }

@@ -105,6 +105,32 @@ import Testing
         #expect(memberships.first(where: { $0.fileId == fileB })?.status == .suggested)
     }
 
+    @Test func confirmSelectedProjectMembershipsLeavesTheRestSuggestedAtLargerScale() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        let rootId = try await makeRoot(db)
+        let project = try await db.writer.write { conn in try Project(name: "Kit").inserted(conn) }
+        var fileIds: [Int64] = []
+        for i in 0..<6 {
+            fileIds.append(try await makeFile(db, rootId: rootId, path: "/tmp/f\(i).stl"))
+        }
+        let idsToInsert = fileIds
+        try await db.writer.write { conn in
+            for fileId in idsToInsert {
+                try conn.execute(sql: "INSERT INTO project_files (project_id, file_id, status) VALUES (?, ?, 'suggested')", arguments: [project.id!, fileId])
+            }
+        }
+
+        let service = SuggestionReviewService(writer: db.writer)
+        #expect(try await service.suggestedProjectMemberships().count == 6)
+
+        let selected = fileIds.prefix(5).map { (projectId: project.id!, fileId: $0) }
+        try await service.confirmProjectMemberships(selected)
+
+        let remaining = try await service.suggestedProjectMemberships()
+        #expect(remaining.count == 1, "confirming 5 of 6 must leave exactly 1 suggested, found \(remaining.count)")
+        #expect(remaining.first?.fileId == fileIds.last)
+    }
+
     @Test func confirmAllSuggestedProjectMembershipsConfirmsEveryOne() async throws {
         let db = try SQLiteSpoolDatabase(path: nil)
         let rootId = try await makeRoot(db)

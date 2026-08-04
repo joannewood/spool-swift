@@ -10,18 +10,17 @@ public struct ArchiveExtractionService: Sendable {
         case zipFileNotFound
         case rootNotFound
         case cannotExtractIntoReadOnlyRoot
-        case noToolAvailableForFormat
-        case externalToolFailed(status: Int32)
+        /// `.7z`/`.rar` can never reach `confirmed` — `ArchiveInspectionService` always
+        /// stages them as `.unsupportedFormat` (no in-sandbox way to run an external
+        /// `unar`/`7z`; see its doc comment) — so this is only reachable if that
+        /// invariant is ever broken elsewhere, not a real runtime path today.
+        case unsupportedArchiveFormat
     }
 
     private let writer: any DatabaseWriter
-    /// See `ArchiveInspectionService.externalToolDirectory` — same user-granted, security-
-    /// scoped-resolved `unar`/`7z` location, `nil` fully supported.
-    private let externalToolDirectory: URL?
 
-    public init(writer: any DatabaseWriter, externalToolDirectory: URL? = nil) {
+    public init(writer: any DatabaseWriter) {
         self.writer = writer
-        self.externalToolDirectory = externalToolDirectory
     }
 
     public func extract(zipFileId: Int64) async throws {
@@ -41,15 +40,13 @@ public struct ArchiveExtractionService: Sendable {
             let stem = archiveURL.deletingPathExtension().lastPathComponent
             var destinationURL = uniqueURL(baseName: stem, in: archiveURL.deletingLastPathComponent())
 
-            if archiveURL.pathExtension.lowercased() == "zip" {
-                // ZIPFoundation's `unzipItem` already guards each entry with
-                // `entryURL.isContained(in: destinationURL)` before writing anything —
-                // the zip-slip protection this needs, provided by the library itself.
-                try FileManager.default.unzipItem(at: archiveURL, to: destinationURL)
-            } else {
-                try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-                try extractViaExternalTool(archiveURL: archiveURL, to: destinationURL)
+            guard archiveURL.pathExtension.lowercased() == "zip" else {
+                throw ExtractionError.unsupportedArchiveFormat
             }
+            // ZIPFoundation's `unzipItem` already guards each entry with
+            // `entryURL.isContained(in: destinationURL)` before writing anything — the
+            // zip-slip protection this needs, provided by the library itself.
+            try FileManager.default.unzipItem(at: archiveURL, to: destinationURL)
 
             try FileManager.default.removeItem(at: archiveURL)
 
@@ -75,26 +72,6 @@ public struct ArchiveExtractionService: Sendable {
         }
     }
 
-    private func extractViaExternalTool(archiveURL: URL, to destinationURL: URL) throws {
-        guard let tool = ArchiveToolLocator.locate(preferredDirectory: externalToolDirectory) else { throw ExtractionError.noToolAvailableForFormat }
-        let process = Process()
-        switch tool.kind {
-        case .unar:
-            process.executableURL = tool.executableURL
-            process.arguments = ["-o", destinationURL.path, archiveURL.path]
-        case .sevenZip:
-            process.executableURL = tool.executableURL
-            process.arguments = ["x", "-o\(destinationURL.path)", archiveURL.path]
-        }
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw ExtractionError.externalToolFailed(status: process.terminationStatus)
-        }
-    }
-
     private func uniqueURL(baseName: String, in directory: URL) -> URL {
         var candidate = directory.appendingPathComponent(baseName)
         var suffix = 2
@@ -115,8 +92,8 @@ public struct ExtractZipJobHandler: JobHandler {
 
     private let extraction: ArchiveExtractionService
 
-    public init(writer: any DatabaseWriter, externalToolDirectory: URL? = nil) {
-        self.extraction = ArchiveExtractionService(writer: writer, externalToolDirectory: externalToolDirectory)
+    public init(writer: any DatabaseWriter) {
+        self.extraction = ArchiveExtractionService(writer: writer)
     }
 
     public func handle(_ job: Job) async throws {

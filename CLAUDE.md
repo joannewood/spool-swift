@@ -100,6 +100,29 @@ per change while iterating; save one full per-package `swift test` (no `--filter
   the Xcode project — clone, then run `xcodegen generate` before opening in Xcode. `Spool
   2.xcodeproj` is the same stray, unreferenced artifact mentioned above; excluded rather
   than deleted since it's untracked either way.
+- **App Sandbox does not let a sandboxed app execute an arbitrary external binary via
+  `Process`/`NSTask`, even one it has genuine file access to.** Spool used to let you grant
+  a folder containing `unar`/`7z` (via a security-scoped bookmark, same mechanism as watched
+  roots) so it could shell out to inspect/extract `.7z`/`.rar` archives. Confirmed live,
+  methodically, that this cannot work: (1) every Homebrew `/opt/homebrew/bin/*` entry is a
+  symlink into `Cellar`, and granting `bin` itself doesn't extend through the symlink to
+  wherever it really points — fixable by detecting this and re-prompting for the resolved
+  real directory (Settings used to do this); but even after that fix, (2) `Process.run()`
+  on the *real*, directly-selected, non-symlink binary **still** fails ("the file doesn't
+  exist" — sandbox's disguised permission-denied), with an active
+  `startAccessingSecurityScopedResource()` on both the containing folder and the file
+  itself. `FileManager.isReadableFile`/`fileExists` succeed the whole time; only
+  process-execution is blocked. There is no known entitlement in this app's
+  non-App-Store-but-still-sandboxed configuration that unlocks this — `StepConverterLocator`
+  (`Packages/SpoolCore/Sources/SpoolCore/Jobs/`) works only because `step-tessellate` is
+  bundled *inside* Spool's own signed app bundle, which sidesteps the restriction entirely
+  (same-signature bundled helpers aren't "arbitrary external binaries"). Current behavior:
+  `.7z`/`.rar` are always tracked as `unsupported_format` unconditionally (no tool-detection
+  at all — see `ArchiveInspectionService`), and the Review window just tells the user to
+  extract manually; `RescanService`'s missing-zip sweep deletes the row once the original
+  archive is gone from disk. If external-tool support is ever revisited, it needs either a
+  real answer to the entitlement question above or a bundled-helper redesign (like
+  StepConverter) — not another bookmark/symlink workaround, that avenue is exhausted.
 
 ## Testing conventions
 

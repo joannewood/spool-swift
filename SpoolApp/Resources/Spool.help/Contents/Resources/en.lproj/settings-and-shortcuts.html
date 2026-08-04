@@ -21,8 +21,10 @@ your library exactly as it was last scanned.</td></tr>
 changed while Spool is running are usually picked up immediately regardless, via live
 filesystem watching — this interval is the defensive fallback.</td></tr>
 <tr><td>Automatically extract archives</td><td>Skips the Archives review queue and extracts
-every newly-found relevant <code>.zip</code>/<code>.7z</code>/<code>.rar</code> as soon as
-it's discovered.</td></tr>
+every newly-found relevant <code>.zip</code> as soon as it's discovered. Doesn't apply to
+<code>.7z</code>/<code>.rar</code> — Spool can't extract those itself; see
+<a href="duplicates-archives-and-review.html">Reviewing Duplicates, Archives &amp;
+Suggestions</a>.</td></tr>
 </table>
 
 <h2>Keyboard shortcuts</h2>

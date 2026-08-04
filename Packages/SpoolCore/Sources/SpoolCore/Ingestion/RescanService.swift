@@ -19,6 +19,7 @@ public actor RescanService {
         public var movedCount = 0
         public var missingCount = 0
         public var sidecarMissingCount = 0
+        public var zipRemovedCount = 0
     }
 
     private enum ReconcileOutcome {
@@ -40,12 +41,11 @@ public actor RescanService {
         writer: any DatabaseWriter,
         enqueuer: any JobEnqueuer,
         backfill: BackfillService,
-        thumbnailsDirectory: URL? = nil,
-        externalArchiveToolDirectory: URL? = nil
+        thumbnailsDirectory: URL? = nil
     ) {
         self.writer = writer
         self.enqueuer = enqueuer
-        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer, externalToolDirectory: externalArchiveToolDirectory)
+        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer)
         self.sidecars = SidecarService(writer: writer, thumbnailsDirectory: thumbnailsDirectory)
         self.backfill = backfill
     }
@@ -70,6 +70,18 @@ public actor RescanService {
         var knownSidecarsByPath: [String: SidecarFile] = [:]
         for sidecar in knownSidecars { knownSidecarsByPath[sidecar.path] = sidecar }
 
+        // Unlike `files`/`sidecar_files`, a vanished archive's row is deleted outright
+        // rather than marked `missing` — there's no tags/relationships/print history
+        // attached to a `zip_files` row worth preserving for a possible later revival,
+        // and the whole point (per the unsupported-format review copy) is that the row
+        // should simply disappear once the user deletes the archive, manually extracted
+        // or not.
+        let knownZips = try await writer.read { conn in
+            try ZipFile.filter(Column("watched_root_id") == rootId).fetchAll(conn)
+        }
+        var knownZipsByPath: [String: ZipFile] = [:]
+        for zip in knownZips { knownZipsByPath[zip.path] = zip }
+
         // Only 'active' rows are move candidates — a row already 'missing' from a
         // *prior* rescan is presumed gone for real, not silently still-there-somewhere,
         // so a coincidental hash match doesn't resurrect an arbitrarily old missing row.
@@ -81,6 +93,7 @@ public actor RescanService {
 
         var seenPaths: Set<String> = []
         var seenSidecarPaths: Set<String> = []
+        var seenZipPaths: Set<String> = []
         var summary = Summary()
 
         let enumerator = fileManager.enumerator(
@@ -104,6 +117,7 @@ public actor RescanService {
                 let ext = url.pathExtension.lowercased()
 
                 if Self.archiveExtensions.contains(ext) {
+                    seenZipPaths.insert(url.path)
                     try? await archiveInspection.inspect(path: url.path, watchedRootId: rootId)
                     continue
                 }
@@ -157,10 +171,19 @@ public actor RescanService {
         let missingSidecarIds = knownSidecarsByPath.values
             .filter { $0.status == .active && !seenSidecarPaths.contains($0.path) }
             .compactMap(\.id)
+        // No status filter, unlike the two above — every `zip_files` status (suggested,
+        // confirmed, rejected, unsupported_format) should disappear once its archive is
+        // actually gone from disk, not just the ones still pending review.
+        let missingZipIds = knownZipsByPath.values
+            .filter { !seenZipPaths.contains($0.path) }
+            .compactMap(\.id)
 
         try await writer.write { conn in
             for id in missingFileIds {
                 try conn.execute(sql: "UPDATE files SET status = 'missing' WHERE id = ?", arguments: [id])
+            }
+            for id in missingZipIds {
+                try conn.execute(sql: "DELETE FROM zip_files WHERE id = ?", arguments: [id])
             }
             for id in missingSidecarIds {
                 try conn.execute(sql: "UPDATE sidecar_files SET status = 'missing' WHERE id = ?", arguments: [id])
@@ -169,6 +192,7 @@ public actor RescanService {
         }
         summary.missingCount = missingFileIds.count
         summary.sidecarMissingCount = missingSidecarIds.count
+        summary.zipRemovedCount = missingZipIds.count
         return summary
     }
 

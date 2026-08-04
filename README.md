@@ -50,9 +50,11 @@ Requires **macOS 14 (Sonoma) or later**.
   ![File detail view, showing tags, projects, and suggested relationships](docs/screenshot-detail.png)
 
 - **Archive review** — a `.zip` containing a recognized model file is surfaced for you
-  to confirm or dismiss before anything is extracted. `.7z`/`.rar` support is optional
-  and opt-in (Settings → General → Archives) since macOS has no native reader for
-  either format.
+  to confirm or dismiss before anything is extracted. Spool has no way to look inside
+  `.7z`/`.rar` archives at all (macOS has no native reader, and App Sandbox blocks
+  shelling out to an external one), so those are just listed — extract one yourself and
+  Spool picks up the extracted files normally; the listing disappears once you delete
+  the original archive.
 - **Duplicate cleanup** — byte-identical files are grouped for review, with bulk
   select/delete (via the Trash, not a hard delete).
 - **Printed tracker** — mark a file as printed, rate it, and leave yourself notes.
@@ -62,8 +64,10 @@ Requires **macOS 14 (Sonoma) or later**.
 ## Known gaps
 
 - **Quick Look (spacebar preview)** isn't wired up yet.
-- `.7z`/`.rar` support requires you to have `unar` or `7z` installed yourself (e.g. via
-  Homebrew) and located once in Settings — see the in-app prompt in Admin → Archives.
+- **`.7z`/`.rar` archives can't be extracted by Spool** — App Sandbox doesn't allow
+  running an external `unar`/`7z`, even with access explicitly granted. They're tracked
+  and listed (Review → Archives) so you know they're there; extract them yourself and
+  Spool will pick up the result.
 
 ## Feedback
 

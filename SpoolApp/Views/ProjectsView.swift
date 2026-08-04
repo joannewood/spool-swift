@@ -129,6 +129,7 @@ struct ProjectDetailView: View {
     @State private var showingMerge = false
     @State private var showingMove = false
     @State private var showingColorPicker = false
+    @FocusState private var isRenameFieldFocused: Bool
 
     private let columns = [GridItem(.adaptive(minimum: 140, maximum: 200), spacing: 12)]
     private let projectColumns = [GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 16)]
@@ -187,6 +188,22 @@ struct ProjectDetailView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 breadcrumb
+                // In-place, not a pop-up alert — the toolbar's pencil button turns
+                // this straight into an editable field, Finder/Xcode-style, rather
+                // than opening a separate dialog over the content it's naming.
+                if isRenaming {
+                    TextField("Project name", text: $renameText)
+                        .textFieldStyle(.plain)
+                        .font(.title2).bold()
+                        .focused($isRenameFieldFocused)
+                        .onSubmit { commitRename() }
+                        .onExitCommand { isRenaming = false }
+                        .onChange(of: isRenameFieldFocused) { _, focused in
+                            if !focused { commitRename() }
+                        }
+                } else {
+                    Text(project?.name ?? "Project").font(.title2).bold()
+                }
             }
             .padding(.horizontal).padding(.top, 8).padding(.bottom, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -210,11 +227,8 @@ struct ProjectDetailView: View {
                 }
             }
             ToolbarItem {
-                Button("Rename", systemImage: "pencil") {
-                    renameText = project?.name ?? ""
-                    isRenaming = true
-                }
-                .help("Rename this project")
+                Button("Rename", systemImage: "pencil", action: startRenaming)
+                    .help("Rename this project")
             }
             ToolbarItem {
                 // "increase.indent" (a nested/hierarchy glyph), not "folder" — this
@@ -228,16 +242,6 @@ struct ProjectDetailView: View {
                     .help("Merge this project's files and sub-projects into another project, then delete it")
             }
         }
-        .alert("Rename Project", isPresented: $isRenaming) {
-            TextField("Name", text: $renameText)
-            Button("Save") {
-                let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-                if let project, !trimmed.isEmpty {
-                    Task { await projectsViewModel.rename(project, to: trimmed) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
         .sheet(isPresented: $showingMerge) {
             MergeProjectSheet(sourceProjectId: projectId, onMerged: {
                 showingMerge = false
@@ -248,6 +252,25 @@ struct ProjectDetailView: View {
             MoveProjectSheet(projectId: projectId)
         }
         .task(id: projectId) { await loadAll() }
+    }
+
+    private func startRenaming() {
+        renameText = project?.name ?? ""
+        isRenaming = true
+        isRenameFieldFocused = true
+    }
+
+    /// Commits the in-place rename field — Enter (`.onSubmit`) or clicking away
+    /// (`.onChange(of: isRenameFieldFocused)`) both land here; `isRenaming` flips off
+    /// first so a second call from the other path is a harmless no-op rather than a
+    /// double-commit. Escape cancels via `.onExitCommand` instead, which never calls
+    /// this at all.
+    private func commitRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+        guard let project, !trimmed.isEmpty, trimmed != project.name else { return }
+        Task { await projectsViewModel.rename(project, to: trimmed) }
     }
 
     /// Walks `parentProjectId` all the way to the root, root first — a project nested
@@ -343,17 +366,26 @@ struct ProjectDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Other files in this project (\(sidecarFiles.count))").font(.headline)
             ForEach(sidecarFiles) { sidecar in
-                Button(action: { OpenInAppService.openWithDefaultApplication(fileURL: URL(fileURLWithPath: sidecar.path)) }) {
-                    HStack(spacing: 8) {
-                        sidecarThumbnail(sidecar)
-                        Text(sidecar.filename).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: sidecar.sizeBytes, countStyle: .file))
-                            .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button(action: { OpenInAppService.openWithDefaultApplication(fileURL: URL(fileURLWithPath: sidecar.path)) }) {
+                        HStack(spacing: 8) {
+                            sidecarThumbnail(sidecar)
+                            Text(sidecar.filename).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Text(ByteCountFormatter.string(fromByteCount: sidecar.sizeBytes, countStyle: .file))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .help("Open with the default app for this file type")
+                    Button(action: { OpenInAppService.revealInFinder(fileURL: URL(fileURLWithPath: sidecar.path)) }) {
+                        Image(systemName: "folder")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reveal in Finder")
+                    .accessibilityLabel("Reveal \(sidecar.filename) in Finder")
                 }
-                .buttonStyle(.plain)
-                .help("Open with the default app for this file type")
             }
         }
     }
@@ -807,6 +839,7 @@ private struct ProjectCleanupSheet: View {
                             get: { allChecked },
                             set: { checkedIds = $0 ? Set(suggestions.compactMap(\.id)) : [] }
                         ))
+                        .toggleStyle(.checkbox)
                         .padding(.horizontal).padding(.vertical, 6)
                         List {
                             ForEach(suggestions, id: \.id) { suggestion in
@@ -897,7 +930,7 @@ private struct CleanupSuggestionRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Toggle("", isOn: $isChecked).labelsHidden()
+            Toggle("", isOn: $isChecked).labelsHidden().toggleStyle(.checkbox)
             VStack(alignment: .leading, spacing: 4) {
                 Text(suggestion.project.name)
                     .font(.caption).foregroundStyle(.secondary).strikethrough()

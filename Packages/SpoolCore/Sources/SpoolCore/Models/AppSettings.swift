@@ -12,11 +12,6 @@ public struct AppSettings: SpoolRecord, Sendable {
     public var rescanIntervalSeconds: Int
     public var updatedAt: Date
     public var autoAcceptArchives: Bool
-    /// Security-scoped bookmark for an optional, user-located `unar`/`7z` binary — see
-    /// the `v4_archive_tool_bookmark` migration for why this exists at all. `nil` means
-    /// "not configured," which is a fully supported state: .7z/.rar archives just show
-    /// as unsupported, same as before this existed.
-    public var archiveToolBookmarkData: Data?
 
     public static let singletonId: Int64 = 1
     public static let minRescanIntervalSeconds = 30
@@ -27,14 +22,12 @@ public struct AppSettings: SpoolRecord, Sendable {
         rescanEnabled: Bool = true,
         rescanIntervalSeconds: Int = AppSettings.defaultRescanIntervalSeconds,
         updatedAt: Date = Date(),
-        autoAcceptArchives: Bool = false,
-        archiveToolBookmarkData: Data? = nil
+        autoAcceptArchives: Bool = false
     ) {
         self.id = id
         self.rescanEnabled = rescanEnabled
         self.rescanIntervalSeconds = rescanIntervalSeconds
         self.updatedAt = updatedAt
         self.autoAcceptArchives = autoAcceptArchives
-        self.archiveToolBookmarkData = archiveToolBookmarkData
     }
 }

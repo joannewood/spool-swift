@@ -85,8 +85,8 @@ struct ContentView: View {
                         .help(reviewButtonHelp)
                         .accessibilityLabel(reviewButtonHelp)
                         .overlay(alignment: .topTrailing) {
-                            if jobStatus.pendingJobCount > 0 {
-                                Text("\(min(jobStatus.pendingJobCount, 99))")
+                            if jobStatus.status.pendingJobCount > 0 {
+                                Text("\(min(jobStatus.status.pendingJobCount, 99))")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(.white)
                                     .padding(3)
@@ -141,8 +141,8 @@ struct ContentView: View {
 
     private var reviewButtonHelp: String {
         let base = "Review duplicates, suggestions, archives, and settings"
-        guard jobStatus.pendingJobCount > 0 else { return base }
-        let jobsLabel = jobStatus.pendingJobCount == 1 ? "1 job" : "\(jobStatus.pendingJobCount) jobs"
+        guard jobStatus.status.pendingJobCount > 0 else { return base }
+        let jobsLabel = jobStatus.status.pendingJobCount == 1 ? "1 job" : "\(jobStatus.status.pendingJobCount) jobs"
         return "\(base) — \(jobsLabel) running"
     }
 }
@@ -206,13 +206,14 @@ private struct WatchedFolderSummaryRow: View {
 
 struct MenuBarContentView: View {
     @EnvironmentObject private var environment: AppEnvironment
-    @StateObject private var status = MenuBarStatusViewModel()
+    @StateObject private var statusViewModel = MenuBarStatusViewModel()
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Spool").font(.headline)
             Text(statusLine).font(.caption).foregroundStyle(.secondary)
+            nextScanLine
             Divider()
             Button("Open Library") { openLibrary() }
             Button("Open Review") { openWindow(id: WindowID.review) }
@@ -220,15 +221,51 @@ struct MenuBarContentView: View {
             Button("Quit Spool") { NSApp.terminate(nil) }
         }
         .padding(8)
-        .task { status.start(writer: environment.database.writer) }
+        // This content alone (a headline + two short status lines + three buttons)
+        // sizes to a noticeably narrower dropdown than the system's own menu bar
+        // extras (Wi-Fi, Bluetooth, Sound, Time Machine — all ~250–280pt) — matching
+        // that width reads as "belongs in the menu bar" rather than a cramped outlier.
+        .frame(minWidth: 250, alignment: .leading)
+        .task { statusViewModel.start(writer: environment.database.writer) }
     }
 
     private var statusLine: String {
-        switch status.pendingJobCount {
+        switch statusViewModel.status.pendingJobCount {
         case 0: return "Up to date"
         case 1: return "1 file pending"
-        default: return "\(status.pendingJobCount) files pending"
+        default: return "\(statusViewModel.status.pendingJobCount) files pending"
         }
+    }
+
+    /// Computed once per render, deliberately not a live-ticking `TimelineView` —
+    /// confirmed live that a `TimelineView` inside `MenuBarExtra` content, *and*
+    /// separately, publishing this view model's job-count and rescan-schedule as two
+    /// independent `ValueObservation` streams instead of one combined one, both
+    /// produced the identical crash: `MenuBarExtra`'s AppKit-menu bridging
+    /// (`MenuBehavior.menuHostDidChangeMenuItems` → `MainMenuItemHost.requestUpdate` →
+    /// `ViewRendererHost.updateViewGraph` → back into the render pass that just
+    /// fired) recurses with no base case whenever the dropdown's content re-renders
+    /// again before the previous menu-items update finished — `EXC_BAD_ACCESS`,
+    /// "Thread stack size exceeded due to excessive recursion", within about a second
+    /// of opening. `MenuBarStatusViewModel` now publishes one `Status` struct from one
+    /// observation specifically to keep re-renders to at most one per real DB change;
+    /// this being a plain computed value (not itself reactive) is the other half of
+    /// that same "don't re-render this content for its own sake" posture.
+    @ViewBuilder
+    private var nextScanLine: some View {
+        if !statusViewModel.status.rescanEnabled {
+            Text("Automatic scanning is off").font(.caption2).foregroundStyle(.secondary)
+        } else if let nextScanAt = statusViewModel.status.nextScanAt {
+            Text(nextScanDescription(from: Date(), to: nextScanAt))
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func nextScanDescription(from now: Date, to nextScanAt: Date) -> String {
+        let secondsRemaining = nextScanAt.timeIntervalSince(now)
+        guard secondsRemaining > 30 else { return "Next scan any moment" }
+        let minutesRemaining = Int((secondsRemaining / 60).rounded(.up))
+        return "Next scan in \(minutesRemaining) min\(minutesRemaining == 1 ? "" : "s")"
     }
 
     // `openWindow(id:)` always creates a *new* WindowGroup window rather than

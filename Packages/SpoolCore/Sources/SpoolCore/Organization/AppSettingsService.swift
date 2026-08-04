@@ -44,15 +44,4 @@ public struct AppSettingsService: Sendable {
             )
         }
     }
-
-    /// `data: nil` clears a previously-granted bookmark — "not configured" is a valid,
-    /// fully-supported state (see `AppSettings.archiveToolBookmarkData`).
-    public func updateArchiveToolBookmark(_ data: Data?) async throws {
-        try await writer.write { conn in
-            try conn.execute(
-                sql: "UPDATE app_settings SET archive_tool_bookmark_data = ?, updated_at = ? WHERE id = ?",
-                arguments: [data, Date(), AppSettings.singletonId]
-            )
-        }
-    }
 }

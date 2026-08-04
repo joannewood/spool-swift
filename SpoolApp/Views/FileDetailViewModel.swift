@@ -24,6 +24,16 @@ final class FileDetailViewModel: ObservableObject {
     @Published var printedInput: Bool = false
     @Published var ratingInput: Int = 0
     @Published var commentsInput: String = ""
+    private var savedPrinted = false
+    private var savedRating = 0
+    private var savedComments = ""
+
+    /// Drives whether the print-log Save button shows at all — not just "is printed
+    /// checked" (unchecking an already-saved-as-printed file needs a way to persist
+    /// that too), but "does the current input differ from what's actually saved."
+    var hasUnsavedPrintLogChanges: Bool {
+        printedInput != savedPrinted || ratingInput != savedRating || commentsInput != savedComments
+    }
 
     let detectedApps: [DetectedApp]
     private let environment: AppEnvironment
@@ -48,6 +58,9 @@ final class FileDetailViewModel: ObservableObject {
             printedInput = printLog?.printed ?? false
             ratingInput = printLog?.rating ?? 0
             commentsInput = printLog?.comments ?? ""
+            savedPrinted = printedInput
+            savedRating = ratingInput
+            savedComments = commentsInput
         } catch {
             lastError = "\(error)"
         }
@@ -134,6 +147,9 @@ final class FileDetailViewModel: ObservableObject {
                 comments: commentsInput.isEmpty ? nil : commentsInput
             )
             printLog = try await environment.printLog.fetch(fileId: fileId)
+            savedPrinted = printedInput
+            savedRating = ratingInput
+            savedComments = commentsInput
         } catch { lastError = "\(error)" }
     }
 

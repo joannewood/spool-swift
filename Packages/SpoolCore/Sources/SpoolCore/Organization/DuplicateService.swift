@@ -75,6 +75,17 @@ public struct DuplicateService: Sendable {
         }
     }
 
+    /// Deletes exactly the given files — the "Delete Selected" bulk action for a
+    /// manually checked-off subset of the duplicates queue, as opposed to
+    /// `deleteAllDuplicates`'s own per-group "keep one" default. `try?` per file
+    /// matches `deleteAllDuplicates`'s resilience: one denied/failed delete (e.g. a
+    /// Library-root file slipping through) doesn't abort the rest of the batch.
+    public func deleteDuplicates(fileIds: [Int64]) async throws {
+        for id in fileIds {
+            try? await deleteDuplicate(fileId: id)
+        }
+    }
+
     /// Deletes every "extra" copy across every duplicate group in one action. Per
     /// group: if no copy lives in the read-only Library root, keeps the oldest
     /// (`files` is already oldest-first) and deletes every other copy; if at least one

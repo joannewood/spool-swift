@@ -7,19 +7,10 @@ import GRDB
 public struct ArchiveReviewService: Sendable {
     private let writer: any DatabaseWriter
     private let enqueuer: any JobEnqueuer
-    private let inspection: ArchiveInspectionService
 
-    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer, externalArchiveToolDirectory: URL? = nil) {
+    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer) {
         self.writer = writer
         self.enqueuer = enqueuer
-        self.inspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer, externalToolDirectory: externalArchiveToolDirectory)
-    }
-
-    /// See `ArchiveInspectionService.recheckUnsupported` — the "Check Again" action for
-    /// an archive stuck as unsupported from before an external tool was configured.
-    @discardableResult
-    public func recheckUnsupported(zipFileId: Int64) async throws -> Bool {
-        try await inspection.recheckUnsupported(zipFileId: zipFileId)
     }
 
     public func pendingArchives() async throws -> [ZipFile] {
@@ -52,6 +43,25 @@ public struct ArchiveReviewService: Sendable {
 
     public func unreject(zipFileId: Int64) async throws {
         try await setStatus(zipFileId: zipFileId, status: .suggested)
+    }
+
+    /// Un-rejects just the given subset — the "Un-reject Selected" bulk action for a
+    /// checked-off subset of the rejected-archives queue.
+    public func unreject(zipFileIds: [Int64]) async throws {
+        for id in zipFileIds {
+            try await unreject(zipFileId: id)
+        }
+    }
+
+    /// Un-rejects every currently-rejected archive in one action.
+    @discardableResult
+    public func unrejectAll() async throws -> Int {
+        let rejected = try await rejectedArchives()
+        for zip in rejected {
+            guard let id = zip.id else { continue }
+            try await unreject(zipFileId: id)
+        }
+        return rejected.count
     }
 
     /// Confirms (extracts) just the given subset — the "Confirm Selected" bulk action

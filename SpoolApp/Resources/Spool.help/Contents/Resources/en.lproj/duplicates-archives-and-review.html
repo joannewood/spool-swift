@@ -35,16 +35,18 @@ subset or accept everything at once. Rejecting is remembered — a suggestion yo
 won't come back for the same file.</p>
 
 <h2>Archives</h2>
-<p>A <code>.zip</code>, <code>.7z</code>, or <code>.rar</code> found inside a watched folder is
-only ever surfaced here if it actually contains a recognized 3D-printing file inside — an
-archive of photos or documents is left alone entirely, never even listed.</p>
+<p>A <code>.zip</code> found inside a watched folder is only ever surfaced here if it actually
+contains a recognized 3D-printing file inside — an archive of photos or documents is left alone
+entirely, never even listed. Spool can't look inside <code>.7z</code>/<code>.rar</code> archives
+at all, so every one of those is listed regardless of what's inside.</p>
 <ul>
 <li><strong>Pending</strong> archives are confirmed (extracted, with the original archive then
 removed) or rejected (remembered — the exact same file won't be asked about again, but a
 different file later reusing the same name will be).</li>
-<li><strong>Unsupported</strong> archives are <code>.7z</code>/<code>.rar</code> files found
-without <code>unar</code> installed (<code>brew install unar</code>) to look inside them —
-install it and re-open Spool to pick these back up automatically.</li>
+<li><strong>Unsupported</strong> archives are <code>.7z</code>/<code>.rar</code> files — Spool
+has no way to extract these itself. Extract one yourself (in Finder, or with whatever
+unarchiver you have) and Spool picks up the extracted files automatically, the same as any
+other new files. The entry here disappears on its own once you delete the original archive.</li>
 </ul>
 <p>Turn on <strong>auto-accept</strong> in <a href="settings-and-shortcuts.html">Settings</a> to
 skip this queue entirely and have every relevant archive extracted the moment it's found.</p>

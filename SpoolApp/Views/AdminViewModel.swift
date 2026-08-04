@@ -94,18 +94,19 @@ final class AdminViewModel: ObservableObject {
         } catch { lastError = "\(error)" }
     }
 
-    /// An archive staged as unsupported before an external tool was configured stays
-    /// that way forever otherwise — nothing re-inspects it on its own, since
-    /// `ArchiveInspectionService.inspect`'s own (path, content_hash) uniqueness check
-    /// treats an already-known row as, well, already known. Silently does nothing
-    /// (besides refreshing the lists, which is a no-op if nothing changed) if a tool
-    /// still isn't available or this one genuinely still isn't relevant.
-    func recheckUnsupportedArchive(_ zip: ZipFile) async {
-        guard let id = zip.id else { return }
+    func unrejectSelectedArchives(ids: Set<Int64>) async {
         do {
-            _ = try await environment.archiveReview.recheckUnsupported(zipFileId: id)
+            try await environment.archiveReview.unreject(zipFileIds: Array(ids))
             pendingArchives = try await environment.archiveReview.pendingArchives()
-            unsupportedArchives = try await environment.archiveReview.unsupportedArchives()
+            rejectedArchives = try await environment.archiveReview.rejectedArchives()
+        } catch { lastError = "\(error)" }
+    }
+
+    func unrejectAllArchives() async {
+        do {
+            _ = try await environment.archiveReview.unrejectAll()
+            pendingArchives = try await environment.archiveReview.pendingArchives()
+            rejectedArchives = try await environment.archiveReview.rejectedArchives()
         } catch { lastError = "\(error)" }
     }
 
@@ -154,6 +155,30 @@ final class AdminViewModel: ObservableObject {
             lastError = "\(file.filename) lives in your read-only Library folder and can't be deleted from Spool — remove it in Finder instead."
         } catch {
             lastError = "\(error)"
+        }
+    }
+
+    /// Deletes exactly the manually checked-off files — the "Delete Selected" bulk
+    /// action, as opposed to `deleteAllDuplicates`'s own per-group "keep one" default.
+    func deleteSelectedDuplicates(_ files: [SpoolFile]) async {
+        do {
+            try await environment.duplicates.deleteDuplicates(fileIds: files.compactMap(\.id))
+            duplicateGroups = try await environment.duplicates.listDuplicateGroups()
+        } catch {
+            lastError = "\(error)"
+        }
+    }
+
+    /// The count `deleteAllDuplicates()` would actually remove — mirrors its own
+    /// per-group rule (keep the oldest copy, or every Library copy if any exist) so
+    /// the "Delete All (N)" bulk button can show a number that matches what it does,
+    /// same as every other queue's "Confirm All (N)".
+    var duplicateFilesEligibleForAutoCleanup: Int {
+        duplicateGroups.reduce(0) { total, group in
+            let nonLibrary = group.files.filter { !libraryRootIds.contains($0.watchedRootId) }
+            guard !nonLibrary.isEmpty else { return total }
+            if nonLibrary.count == group.files.count { return total + (group.files.count - 1) }
+            return total + nonLibrary.count
         }
     }
 

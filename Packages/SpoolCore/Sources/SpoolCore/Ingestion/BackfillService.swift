@@ -22,12 +22,11 @@ public actor BackfillService {
     public init(
         writer: any DatabaseWriter,
         enqueuer: any JobEnqueuer,
-        thumbnailsDirectory: URL? = nil,
-        externalArchiveToolDirectory: URL? = nil
+        thumbnailsDirectory: URL? = nil
     ) {
         self.writer = writer
         self.enqueuer = enqueuer
-        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer, externalToolDirectory: externalArchiveToolDirectory)
+        self.archiveInspection = ArchiveInspectionService(writer: writer, enqueuer: enqueuer)
         self.sidecars = SidecarService(writer: writer, thumbnailsDirectory: thumbnailsDirectory)
     }
 

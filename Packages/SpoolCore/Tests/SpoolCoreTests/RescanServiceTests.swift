@@ -93,6 +93,36 @@ private actor RescanRecordingEnqueuer: JobEnqueuer {
         #expect(row?.status == .missing)
     }
 
+    /// `.7z`/`.rar` archives are tracked (see `ArchiveInspectionServiceTests`'s
+    /// `sevenZipIsAlwaysTrackedAsUnsupportedFormat`) purely so Review can tell the user
+    /// to extract manually — this is the other half of that design: once the archive
+    /// itself is gone, the row should vanish on its own rather than sit there forever
+    /// pointing at nothing. Deleted outright, unlike `files`/`sidecar_files`'
+    /// `missing`-then-revivable status — there's no tags/relationships/print history on
+    /// a `zip_files` row worth preserving for a possible later reappearance.
+    @Test func rescanRemovesZipFileRowOnceTheArchiveIsGone() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        let dropFolder = try await makeRoot(db, kind: .dropFolder)
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let archivePath = tempDir.appendingPathComponent("bundle.7z")
+        try "not a real 7z, content is irrelevant here".write(to: archivePath, atomically: true, encoding: .utf8)
+
+        let (_, rescan, _) = makeServices(db)
+        try await rescan.run(root: dropFolder, rootURL: tempDir)
+
+        let staged = try await db.writer.read { conn in try ZipFile.fetchAll(conn) }
+        #expect(staged.count == 1)
+        #expect(staged.first?.status == .unsupportedFormat)
+
+        try FileManager.default.removeItem(at: archivePath)
+        let summary = try await rescan.run(root: dropFolder, rootURL: tempDir)
+
+        let remaining = try await db.writer.read { conn in try ZipFile.fetchAll(conn) }
+        #expect(remaining.isEmpty, "the row must be gone, not just marked missing")
+        #expect(summary.zipRemovedCount == 1)
+    }
+
     @Test func rescanRevivesMissingFileWithUnchangedContent() async throws {
         let db = try SQLiteSpoolDatabase(path: nil)
         let library = try await makeRoot(db)
