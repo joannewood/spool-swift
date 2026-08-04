@@ -7,12 +7,17 @@
 // SwiftUI's ImageRenderer so it runs as a bare command-line script with no app run loop
 // needed.
 //
+// Both previously shipped genuinely 2x-oversized (see `renderPixelExact`'s doc comment
+// below for the actual root cause and how it's fixed now) — an earlier menu bar attempt
+// using this same generated-asset approach was abandoned for that reason, in favor of a
+// plain SF Symbol. Now that the real bug is fixed, back to the custom mark.
+//
 // Design: a "spool" mandala — an outer ring, a concentric double-ring hub at the
 // center (the spool's core, viewed end-on), and 8 S-curl "hooks" radiating outward at
-// 45° increments, each echoing a loop of wound filament. App icon renders this in white
-// on the existing blue-to-indigo gradient squircle; the menu bar icon is the same
-// mandala alone, black, as a template image (macOS recolors template images for
-// light/dark menu bars automatically).
+// 45° increments, each echoing a loop of wound filament — rendered in white on the
+// existing blue-to-indigo gradient squircle for the app icon. The menu bar icon is the
+// same hub alone, black, as a template image (macOS recolors template images
+// automatically for light/dark menu bars) — no S-curls, too fine-grained at that scale.
 
 import AppKit
 
@@ -62,7 +67,10 @@ func sShapePath(width w: CGFloat, height h: CGFloat) -> CGPath {
 /// to mud at small icon sizes (confirmed live at 32px) — Apple's own HIG guidance is to
 /// simplify detail at smaller renditions rather than just scale the same artwork down,
 /// so the 16/32pt renditions use fewer, larger S's and a single hub ring instead.
-func drawMandala(ctx: CGContext, size: CGFloat, color: NSColor, hookCount: Int = 8, simplifiedHub: Bool = false) {
+func drawMandala(
+    ctx: CGContext, size: CGFloat, color: NSColor, hookCount: Int = 8, simplifiedHub: Bool = false,
+    strokeWidthFactor: CGFloat? = nil
+) {
     let cx = size / 2
     let cy = size / 2
 
@@ -76,7 +84,10 @@ func drawMandala(ctx: CGContext, size: CGFloat, color: NSColor, hookCount: Int =
     let sWidth = size * (hookCount <= 4 ? 0.135 : 0.075)
     let sHeight = size * (hookCount <= 4 ? 0.155 : 0.095)
     let sDistanceFromCenter = size * 0.29
-    let strokeWidth = max(1.5, size * (hookCount <= 4 ? 0.045 : 0.028))
+    // `strokeWidthFactor` lets a caller (the app icon, specifically — see
+    // `drawAppIcon`) bolden its line weight without also thickening the menu bar
+    // bullseye, which shares this same function and was already confirmed working.
+    let strokeWidth = max(1.5, size * (strokeWidthFactor ?? (hookCount <= 4 ? 0.045 : 0.028)))
 
     color.setStroke()
     ctx.setLineWidth(strokeWidth)
@@ -126,23 +137,51 @@ let appIconSpecs: [IconSpec] = [
     IconSpec(points: 512, scale: 2, filename: "icon_512x512@2x.png"),
 ]
 
-func drawAppIcon(pixelSize: Int) -> NSImage {
-    let size = CGFloat(pixelSize)
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    guard let ctx = NSGraphicsContext.current?.cgContext else {
-        image.unlockFocus()
-        return image
+/// Renders directly into an `NSBitmapImageRep` sized exactly `pixelSize`×`pixelSize` —
+/// NOT `NSImage(size:).lockFocus()`, which was the actual root cause of every icon
+/// this script produced coming out exactly 2x too large (confirmed live via actool's
+/// own build warnings, e.g. "icon_512x512@2x.png is 2048x2048 but should be 1024x1024",
+/// for every single size). `lockFocus()` bakes in the *host Mac's own* Retina backing
+/// scale factor into the exported pixels regardless of the requested `NSSize` — a
+/// classic AppKit gotcha, and exactly why actool considered every image invalid for
+/// its declared (idiom, size, scale) slot and silently skipped generating
+/// `CFBundleIconName` entirely, which is why the Dock never showed a custom icon at
+/// all, independent of any icon *cache* (there was nothing valid to cache in the first
+/// place). Drawing into an explicitly-sized bitmap rep instead is unaffected by the
+/// current display's scale factor.
+func renderPixelExact(pixelSize: Int, draw: (CGContext, CGFloat) -> Void) -> Data {
+    guard let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: pixelSize, pixelsHigh: pixelSize,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    ) else {
+        fatalError("failed to create a \(pixelSize)x\(pixelSize) bitmap")
     }
+    bitmap.size = NSSize(width: pixelSize, height: pixelSize)
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    let ctx = NSGraphicsContext(bitmapImageRep: bitmap)!
+    NSGraphicsContext.current = ctx
+    draw(ctx.cgContext, CGFloat(pixelSize))
+    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+        fatalError("failed to encode a \(pixelSize)x\(pixelSize) PNG")
+    }
+    return png
+}
+
+func drawAppIcon(pixelSize: Int) -> Data {
+    renderPixelExact(pixelSize: pixelSize) { ctx, size in
 
     // Squircle background, matching macOS's ~22.37%-of-edge corner radius convention.
     let cornerRadius = size * 0.2237
     let backgroundPath = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: size, height: size), xRadius: cornerRadius, yRadius: cornerRadius)
     ctx.saveGState()
     backgroundPath.addClip()
+    // Darkened from the original (0.29, 0.45, 0.98)→(0.45, 0.29, 0.90) — the white
+    // glyph's outline was still hard to see against that lighter blue/purple.
     let colors = [
-        NSColor(calibratedRed: 0.29, green: 0.45, blue: 0.98, alpha: 1.0).cgColor, // top: blue
-        NSColor(calibratedRed: 0.45, green: 0.29, blue: 0.90, alpha: 1.0).cgColor, // bottom: indigo/purple
+        NSColor(calibratedRed: 0.13, green: 0.24, blue: 0.68, alpha: 1.0).cgColor, // top: deep blue
+        NSColor(calibratedRed: 0.28, green: 0.13, blue: 0.58, alpha: 1.0).cgColor, // bottom: deep indigo
     ]
     let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: size), end: CGPoint(x: size, y: 0), options: [])
@@ -157,24 +196,24 @@ func drawAppIcon(pixelSize: Int) -> NSImage {
     ctx.restoreGState()
 
     // The mandala glyph itself, inset so it stays clear of the squircle's corners.
-    let inset = size * 0.07
+    // 0.07 (86% fill) read as oversized/cramped against the squircle; 0.16 (68% fill)
+    // pulled back too far the other way — standard macOS app icon glyphs usually sit
+    // around 70-75%.
+    let inset = size * 0.13
     let isSmall = pixelSize <= 40
     ctx.saveGState()
     ctx.translateBy(x: inset, y: inset)
-    drawMandala(ctx: ctx, size: size - inset * 2, color: .white, hookCount: isSmall ? 4 : 8, simplifiedHub: isSmall)
+    drawMandala(
+        ctx: ctx, size: size - inset * 2, color: .white, hookCount: isSmall ? 4 : 8, simplifiedHub: isSmall,
+        strokeWidthFactor: isSmall ? 0.095 : 0.07
+    )
     ctx.restoreGState()
-
-    image.unlockFocus()
-    return image
+    }
 }
 
 for spec in appIconSpecs {
     let pixelSize = spec.points * spec.scale
-    let image = drawAppIcon(pixelSize: pixelSize)
-    guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-          let png = bitmap.representation(using: .png, properties: [:]) else {
-        fatalError("failed to render \(spec.filename)")
-    }
+    let png = drawAppIcon(pixelSize: pixelSize)
     let url = appIconDir.appendingPathComponent(spec.filename)
     try! png.write(to: url)
     print("wrote \(spec.filename) (\(pixelSize)x\(pixelSize))")
@@ -200,23 +239,16 @@ let appIconContentsJSON = """
 try! appIconContentsJSON.write(to: appIconDir.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
 print("wrote AppIcon Contents.json")
 
-// MARK: - Menu bar icon (mandala alone, black, template image)
+// MARK: - Menu bar icon (hub alone, black, template image)
 
-/// Menu bar status items are small (~18pt) and macOS recolors "template" images
-/// automatically for light/dark menu bars — draw black on transparent, at 1x/2x/3x.
-func drawMenuBarIcon(pixelSize: Int) -> NSImage {
-    let size = CGFloat(pixelSize)
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    guard let ctx = NSGraphicsContext.current?.cgContext else {
-        image.unlockFocus()
-        return image
+/// A plain bullseye (outer ring + double-ring hub, no S-curls) — at true menu-bar scale
+/// (~18pt) the full mandala's S-curls are too fine-grained to read as anything but
+/// noise. `hookCount: 0` skips them entirely, `simplifiedHub: false` keeps both hub
+/// rings for a proper bullseye look.
+func drawMenuBarIcon(pixelSize: Int) -> Data {
+    renderPixelExact(pixelSize: pixelSize) { ctx, size in
+        drawMandala(ctx: ctx, size: size, color: .black, hookCount: 0, simplifiedHub: false)
     }
-    // Always at menu-bar scale, i.e. always "small" — same simplified 4-S, single-hub
-    // form the app icon uses at its own smallest renditions.
-    drawMandala(ctx: ctx, size: size, color: .black, hookCount: 4, simplifiedHub: true)
-    image.unlockFocus()
-    return image
 }
 
 let menuBarSpecs: [IconSpec] = [
@@ -227,11 +259,7 @@ let menuBarSpecs: [IconSpec] = [
 
 for spec in menuBarSpecs {
     let pixelSize = spec.points * spec.scale
-    let image = drawMenuBarIcon(pixelSize: pixelSize)
-    guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-          let png = bitmap.representation(using: .png, properties: [:]) else {
-        fatalError("failed to render \(spec.filename)")
-    }
+    let png = drawMenuBarIcon(pixelSize: pixelSize)
     let url = menuBarIconDir.appendingPathComponent(spec.filename)
     try! png.write(to: url)
     print("wrote \(spec.filename) (\(pixelSize)x\(pixelSize))")
