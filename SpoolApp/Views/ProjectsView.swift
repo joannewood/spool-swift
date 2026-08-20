@@ -48,39 +48,6 @@ struct ProjectColorPicker: View {
     }
 }
 
-/// One row in the nestable projects tree — recursive via `DisclosureGroup` for any
-/// project that has children, a plain `Label` otherwise. Lives in the same
-/// `List(selection:)` as "All Files" in `ContentView`'s sidebar, so tapping a project
-/// switches the detail pane the same way tapping "All Files" does.
-struct ProjectTreeRow: View {
-    let project: Project
-    @ObservedObject var viewModel: ProjectsViewModel
-
-    var body: some View {
-        let kids = viewModel.children(ofParentId: project.id)
-        if kids.isEmpty {
-            row
-        } else {
-            DisclosureGroup {
-                ForEach(kids) { child in
-                    ProjectTreeRow(project: child, viewModel: viewModel)
-                }
-            } label: {
-                row
-            }
-        }
-    }
-
-    private var row: some View {
-        Label {
-            Text(project.name)
-        } icon: {
-            Image(systemName: "folder.fill").foregroundStyle(project.color.swiftUIColor)
-        }
-        .tag(SidebarSelection.project(project.id ?? -1))
-    }
-}
-
 /// Prompts for a name and creates a top-level project — the "+" affordance next to the
 /// Projects section header, deliberately just an icon rather than a labeled button
 /// since its context (right next to the section title) already says what it does.
@@ -568,12 +535,24 @@ struct ProjectsOverviewView: View {
     @State private var visuals: [Int64: ProjectCardVisuals] = [:]
     @State private var cleanupCount = 0
     @State private var showingCleanup = false
+    @State private var searchQuery = ""
     // Same key convention as LibraryGridView's `libraryViewMode` — a separate key since
     // this is an independent toggle over a different collection (projects, not files).
     @AppStorage("projectsViewMode") private var viewModeRaw = ProjectsViewMode.grid.rawValue
 
     private var viewMode: ProjectsViewMode { ProjectsViewMode(rawValue: viewModeRaw) ?? .grid }
     private let columns = [GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 16)]
+
+    /// This page is where a project too deep/far down to fit in the sidebar's own
+    /// capped list actually gets found — every project at every depth is already
+    /// loaded into `summaries` (see `load()`), so a plain client-side name filter is
+    /// all "management" over a large tree needs; both `LazyVGrid` and `List` already
+    /// virtualize their rows, so filtering down to a search match doesn't need any
+    /// pagination of its own the way AdminView's bulk-review queues did.
+    private var filteredSummaries: [ProjectSummary] {
+        guard !searchQuery.isEmpty else { return summaries }
+        return summaries.filter { $0.project.name.localizedCaseInsensitiveContains(searchQuery) }
+    }
 
     var body: some View {
         Group {
@@ -583,10 +562,12 @@ struct ProjectsOverviewView: View {
                     systemImage: "square.grid.2x2",
                     description: Text("Create one from any file's detail page, or with the + button in the sidebar.")
                 )
+            } else if filteredSummaries.isEmpty {
+                ContentUnavailableView.search(text: searchQuery)
             } else if viewMode == .grid {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(summaries) { summary in
+                        ForEach(filteredSummaries) { summary in
                             Button(action: { selection = .project(summary.project.id ?? -1) }) {
                                 ProjectCardView(
                                     summary: summary,
@@ -600,7 +581,7 @@ struct ProjectsOverviewView: View {
                     .padding()
                 }
             } else {
-                List(summaries) { summary in
+                List(filteredSummaries) { summary in
                     Button(action: { selection = .project(summary.project.id ?? -1) }) {
                         ProjectListRow(
                             summary: summary,
@@ -613,6 +594,7 @@ struct ProjectsOverviewView: View {
             }
         }
         .navigationTitle("Projects")
+        .searchable(text: $searchQuery, prompt: "Search projects…")
         .toolbar {
             ToolbarItem {
                 Picker("View", selection: $viewModeRaw) {

@@ -43,6 +43,23 @@ struct AdminView: View {
     @State private var checkedArchiveIds: Set<Int64> = []
     @State private var checkedRejectedArchiveIds: Set<Int64> = []
     @State private var checkedDuplicateFileIds: Set<Int64> = []
+    // Each bulk-review queue below only ever builds `visibleXCount` rows into the
+    // view tree at once, not its full backing array — confirmed via a real crash
+    // report from a large library: a long, non-paginated `ForEach` of checkbox rows
+    // inside this window's `Form` can blow straight through SwiftUI's AttributeGraph
+    // node budget and abort the whole process (`Checkbox.makeNSView` deep inside a
+    // `StackLayout`/`DynamicViewList` layout pass, not just a slow render). "Show N
+    // More" below each queue grows its own count; "Select All"/"<verb> Selected" is
+    // scoped to just what's currently shown for the same reason (so a checkbox never
+    // silently selects rows you can't see) — "<verb> All (N)" is unaffected, since
+    // that's always been a true, unpaginated server-side sweep of the real total.
+    private static let reviewPageSize = 50
+    @State private var visibleRelationshipsCount = AdminView.reviewPageSize
+    @State private var visibleProjectMembershipsCount = AdminView.reviewPageSize
+    @State private var visibleDuplicateGroupsCount = AdminView.reviewPageSize
+    @State private var visiblePendingArchivesCount = AdminView.reviewPageSize
+    @State private var visibleRejectedArchivesCount = AdminView.reviewPageSize
+    @State private var visibleUnsupportedArchivesCount = AdminView.reviewPageSize
     // Window(id:) scenes on macOS keep this view (and its @StateObject) alive across
     // close/reopen — closing is just an NSWindow order-out, not a real teardown — so
     // `.task` (which only fires once per view identity) never refires on reopen and
@@ -249,6 +266,16 @@ struct AdminView: View {
         }
     }
 
+    /// Paginated by group, not by flattened file count — a group's files always
+    /// render together, so slicing mid-group would be a strange place to cut off.
+    private var visibleDuplicateGroups: [DuplicateGroup] {
+        Array(viewModel.duplicateGroups.prefix(visibleDuplicateGroupsCount))
+    }
+
+    private var visibleDeletableDuplicateFiles: [SpoolFile] {
+        visibleDuplicateGroups.flatMap(\.files).filter { !viewModel.libraryRootIds.contains($0.watchedRootId) }
+    }
+
     private var duplicatesSection: some View {
         Section("Duplicate Files (\(viewModel.duplicateGroups.count))") {
             // Same "explain the destructive bulk action before the bar" placement as
@@ -265,11 +292,15 @@ struct AdminView: View {
             BulkActionBar(
                 totalCount: viewModel.duplicateFilesEligibleForAutoCleanup,
                 selectedCount: checkedDuplicateFileIds.count,
-                allSelected: !deletableDuplicateFiles.isEmpty && checkedDuplicateFileIds.count == deletableDuplicateFiles.count,
+                allSelected: !visibleDeletableDuplicateFiles.isEmpty
+                    && visibleDeletableDuplicateFiles.allSatisfy { checkedDuplicateFileIds.contains($0.id ?? -1) },
                 actionLabel: "Delete",
                 allActionLabel: "Delete All Extra Copies",
                 destructive: true,
-                onToggleSelectAll: { checkedDuplicateFileIds = $0 ? Set(deletableDuplicateFiles.compactMap(\.id)) : [] },
+                onToggleSelectAll: { isOn in
+                    let visibleIds = Set(visibleDeletableDuplicateFiles.compactMap(\.id))
+                    if isOn { checkedDuplicateFileIds.formUnion(visibleIds) } else { checkedDuplicateFileIds.subtract(visibleIds) }
+                },
                 onActionSelected: {
                     // Selecting every copy in a group is easy to do without meaning
                     // to (e.g. "Select All" across a library with one big group) —
@@ -314,7 +345,7 @@ struct AdminView: View {
             } message: {
                 Text("Your selection includes every copy in \(duplicateGroupsFullyEmptiedBySelection.count == 1 ? "one group" : "\(duplicateGroupsFullyEmptiedBySelection.count) groups") — none would be left, unlike \"Delete All Extra Copies,\" which always keeps one. They'll still go to the Trash, so this is recoverable there.")
             }
-            ForEach(viewModel.duplicateGroups) { group in
+            ForEach(visibleDuplicateGroups) { group in
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(group.files.count) copies").font(.caption).foregroundStyle(.secondary)
                     ForEach(group.files) { file in
@@ -353,7 +384,14 @@ struct AdminView: View {
                     }
                 }
             }
+            ShowMoreRow(shownCount: visibleDuplicateGroups.count, totalCount: viewModel.duplicateGroups.count, pageSize: Self.reviewPageSize) {
+                visibleDuplicateGroupsCount += Self.reviewPageSize
+            }
         }
+    }
+
+    private var visibleRelationships: [(relationship: Relationship, fromFile: SpoolFile, toFile: SpoolFile)] {
+        Array(viewModel.suggestedRelationships.prefix(visibleRelationshipsCount))
     }
 
     private var suggestedRelationshipsSection: some View {
@@ -364,8 +402,12 @@ struct AdminView: View {
             BulkActionBar(
                 totalCount: viewModel.suggestedRelationships.count,
                 selectedCount: checkedRelationshipIds.count,
-                allSelected: !viewModel.suggestedRelationships.isEmpty && checkedRelationshipIds.count == viewModel.suggestedRelationships.count,
-                onToggleSelectAll: { checkedRelationshipIds = $0 ? Set(viewModel.suggestedRelationships.compactMap(\.relationship.id)) : [] },
+                allSelected: !visibleRelationships.isEmpty
+                    && visibleRelationships.allSatisfy { checkedRelationshipIds.contains($0.relationship.id ?? -1) },
+                onToggleSelectAll: { isOn in
+                    let visibleIds = Set(visibleRelationships.compactMap(\.relationship.id))
+                    if isOn { checkedRelationshipIds.formUnion(visibleIds) } else { checkedRelationshipIds.subtract(visibleIds) }
+                },
                 onActionSelected: {
                     let ids = checkedRelationshipIds
                     Task {
@@ -375,7 +417,7 @@ struct AdminView: View {
                 },
                 onActionAll: { Task { await viewModel.confirmAllRelationships(); checkedRelationshipIds = [] } }
             )
-            ForEach(viewModel.suggestedRelationships, id: \.relationship.id) { pair in
+            ForEach(visibleRelationships, id: \.relationship.id) { pair in
                 HStack {
                     Toggle("", isOn: checkedBinding(pair.relationship.id, in: $checkedRelationshipIds))
                         .labelsHidden()
@@ -388,7 +430,14 @@ struct AdminView: View {
                     )
                 }
             }
+            ShowMoreRow(shownCount: visibleRelationships.count, totalCount: viewModel.suggestedRelationships.count, pageSize: Self.reviewPageSize) {
+                visibleRelationshipsCount += Self.reviewPageSize
+            }
         }
+    }
+
+    private var visibleProjectMemberships: [SuggestedProjectMembershipEntry] {
+        Array(viewModel.suggestedProjectMemberships.prefix(visibleProjectMembershipsCount))
     }
 
     private var suggestedProjectsSection: some View {
@@ -396,8 +445,12 @@ struct AdminView: View {
             BulkActionBar(
                 totalCount: viewModel.suggestedProjectMemberships.count,
                 selectedCount: checkedProjectMembershipKeys.count,
-                allSelected: !viewModel.suggestedProjectMemberships.isEmpty && checkedProjectMembershipKeys.count == viewModel.suggestedProjectMemberships.count,
-                onToggleSelectAll: { checkedProjectMembershipKeys = $0 ? Set(viewModel.suggestedProjectMemberships.map(\.id)) : [] },
+                allSelected: !visibleProjectMemberships.isEmpty
+                    && visibleProjectMemberships.allSatisfy { checkedProjectMembershipKeys.contains($0.id) },
+                onToggleSelectAll: { isOn in
+                    let visibleIds = Set(visibleProjectMemberships.map(\.id))
+                    if isOn { checkedProjectMembershipKeys.formUnion(visibleIds) } else { checkedProjectMembershipKeys.subtract(visibleIds) }
+                },
                 onActionSelected: {
                     let pairs = viewModel.suggestedProjectMemberships
                         .filter { checkedProjectMembershipKeys.contains($0.id) }
@@ -409,7 +462,7 @@ struct AdminView: View {
                 },
                 onActionAll: { Task { await viewModel.confirmAllProjectMemberships(); checkedProjectMembershipKeys = [] } }
             )
-            ForEach(viewModel.suggestedProjectMemberships) { entry in
+            ForEach(visibleProjectMemberships) { entry in
                 HStack {
                     Toggle("", isOn: checkedBinding(entry.id, in: $checkedProjectMembershipKeys))
                         .labelsHidden()
@@ -421,6 +474,12 @@ struct AdminView: View {
                         onReject: { Task { await viewModel.rejectProjectMembership(entry.membership) } }
                     )
                 }
+            }
+            ShowMoreRow(
+                shownCount: visibleProjectMemberships.count, totalCount: viewModel.suggestedProjectMemberships.count,
+                pageSize: Self.reviewPageSize
+            ) {
+                visibleProjectMembershipsCount += Self.reviewPageSize
             }
         }
     }
@@ -442,6 +501,10 @@ struct AdminView: View {
         + Text(entry.project.name).fontWeight(.medium).foregroundColor(.primary)
     }
 
+    private var visiblePendingArchives: [ZipFile] {
+        Array(viewModel.pendingArchives.prefix(visiblePendingArchivesCount))
+    }
+
     private var pendingArchivesSection: some View {
         Section("Pending Archives (\(viewModel.pendingArchives.count))") {
             Text("Confirming extracts the archive into its folder and deletes the original — there's no undo. If you're not sure, reject it (you can always un-reject it below).")
@@ -449,8 +512,12 @@ struct AdminView: View {
             BulkActionBar(
                 totalCount: viewModel.pendingArchives.count,
                 selectedCount: checkedArchiveIds.count,
-                allSelected: !viewModel.pendingArchives.isEmpty && checkedArchiveIds.count == viewModel.pendingArchives.count,
-                onToggleSelectAll: { checkedArchiveIds = $0 ? Set(viewModel.pendingArchives.compactMap(\.id)) : [] },
+                allSelected: !visiblePendingArchives.isEmpty
+                    && visiblePendingArchives.allSatisfy { checkedArchiveIds.contains($0.id ?? -1) },
+                onToggleSelectAll: { isOn in
+                    let visibleIds = Set(visiblePendingArchives.compactMap(\.id))
+                    if isOn { checkedArchiveIds.formUnion(visibleIds) } else { checkedArchiveIds.subtract(visibleIds) }
+                },
                 onActionSelected: {
                     let ids = checkedArchiveIds
                     Task {
@@ -460,7 +527,7 @@ struct AdminView: View {
                 },
                 onActionAll: { Task { await viewModel.confirmAllArchives(); checkedArchiveIds = [] } }
             )
-            ForEach(viewModel.pendingArchives) { zip in
+            ForEach(visiblePendingArchives) { zip in
                 HStack {
                     Toggle("", isOn: checkedBinding(zip.id, in: $checkedArchiveIds))
                         .labelsHidden()
@@ -478,6 +545,9 @@ struct AdminView: View {
                     )
                 }
             }
+            ShowMoreRow(shownCount: visiblePendingArchives.count, totalCount: viewModel.pendingArchives.count, pageSize: Self.reviewPageSize) {
+                visiblePendingArchivesCount += Self.reviewPageSize
+            }
         }
     }
 
@@ -491,6 +561,10 @@ struct AdminView: View {
         )
     }
 
+    private var visibleUnsupportedArchives: [ZipFile] {
+        Array(viewModel.unsupportedArchives.prefix(visibleUnsupportedArchivesCount))
+    }
+
     private var unsupportedArchivesSection: some View {
         Section("Archives Spool Can't Inspect (\(viewModel.unsupportedArchives.count))") {
             // No native/pure-Swift .7z/.rar reader exists, and — confirmed live —
@@ -502,7 +576,7 @@ struct AdminView: View {
             // the original archive is deleted (`RescanService`'s missing-zip sweep).
             Text("Spool can't look inside .7z/.rar archives directly. Extract this one yourself — in Finder, or with whatever unarchiver you have — and Spool will pick up the extracted files automatically. Once you delete the original archive, it disappears from this list.")
                 .font(.caption).foregroundStyle(.secondary)
-            ForEach(viewModel.unsupportedArchives) { zip in
+            ForEach(visibleUnsupportedArchives) { zip in
                 HStack {
                     VStack(alignment: .leading) {
                         Text(zip.filename).lineLimit(1)
@@ -517,7 +591,16 @@ struct AdminView: View {
                     .accessibilityLabel("Reveal \(zip.filename) in Finder")
                 }
             }
+            ShowMoreRow(
+                shownCount: visibleUnsupportedArchives.count, totalCount: viewModel.unsupportedArchives.count, pageSize: Self.reviewPageSize
+            ) {
+                visibleUnsupportedArchivesCount += Self.reviewPageSize
+            }
         }
+    }
+
+    private var visibleRejectedArchives: [ZipFile] {
+        Array(viewModel.rejectedArchives.prefix(visibleRejectedArchivesCount))
     }
 
     private var rejectedArchivesSection: some View {
@@ -525,9 +608,13 @@ struct AdminView: View {
             BulkActionBar(
                 totalCount: viewModel.rejectedArchives.count,
                 selectedCount: checkedRejectedArchiveIds.count,
-                allSelected: !viewModel.rejectedArchives.isEmpty && checkedRejectedArchiveIds.count == viewModel.rejectedArchives.count,
+                allSelected: !visibleRejectedArchives.isEmpty
+                    && visibleRejectedArchives.allSatisfy { checkedRejectedArchiveIds.contains($0.id ?? -1) },
                 actionLabel: "Un-reject",
-                onToggleSelectAll: { checkedRejectedArchiveIds = $0 ? Set(viewModel.rejectedArchives.compactMap(\.id)) : [] },
+                onToggleSelectAll: { isOn in
+                    let visibleIds = Set(visibleRejectedArchives.compactMap(\.id))
+                    if isOn { checkedRejectedArchiveIds.formUnion(visibleIds) } else { checkedRejectedArchiveIds.subtract(visibleIds) }
+                },
                 onActionSelected: {
                     let ids = checkedRejectedArchiveIds
                     Task {
@@ -537,7 +624,7 @@ struct AdminView: View {
                 },
                 onActionAll: { Task { await viewModel.unrejectAllArchives(); checkedRejectedArchiveIds = [] } }
             )
-            ForEach(viewModel.rejectedArchives) { zip in
+            ForEach(visibleRejectedArchives) { zip in
                 HStack {
                     Toggle("", isOn: checkedBinding(zip.id, in: $checkedRejectedArchiveIds))
                         .labelsHidden()
@@ -552,6 +639,33 @@ struct AdminView: View {
                     .accessibilityLabel("Un-reject \(zip.filename)")
                 }
             }
+            ShowMoreRow(shownCount: visibleRejectedArchives.count, totalCount: viewModel.rejectedArchives.count, pageSize: Self.reviewPageSize) {
+                visibleRejectedArchivesCount += Self.reviewPageSize
+            }
+        }
+    }
+}
+
+/// Grows how many rows of a bulk-review queue are actually built into the view tree —
+/// every queue in this window keeps its own `visibleXCount` and slices its backing
+/// array before handing it to `ForEach` (see the comment by those `@State`
+/// declarations for why: a real crash, not just a slow render, confirmed via a crash
+/// report from a large library). Hides itself once every row is already shown.
+private struct ShowMoreRow: View {
+    let shownCount: Int
+    let totalCount: Int
+    let pageSize: Int
+    let onShowMore: () -> Void
+
+    var body: some View {
+        if shownCount < totalCount {
+            HStack {
+                Spacer()
+                Button("Show \(min(pageSize, totalCount - shownCount)) More") { onShowMore() }
+                Text("(\(shownCount) of \(totalCount) shown)").font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.vertical, 2)
         }
     }
 }
@@ -560,7 +674,11 @@ struct AdminView: View {
 /// (suggested relationships, suggested projects, pending archives) — matches the
 /// source app's own accept-bulk/accept-all pattern: a checked-off subset for a
 /// deliberate partial review, or one server-side sweep of everything when the intent
-/// is just "yes, all of them."
+/// is just "yes, all of them." "Select All" (and thus "<verb> Selected") only ever
+/// covers whatever's currently visible per the queue's own pagination — see
+/// `ShowMoreRow` — so a checkbox never silently selects rows you can't see; "<verb>
+/// All" is untouched by any of this, since it's always been a true, unpaginated
+/// server-side sweep of the real total.
 private struct BulkActionBar: View {
     let totalCount: Int
     let selectedCount: Int

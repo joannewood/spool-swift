@@ -123,6 +123,24 @@ per change while iterating; save one full per-package `swift test` (no `--filter
   archive is gone from disk. If external-tool support is ever revisited, it needs either a
   real answer to the entitlement question above or a bundled-helper redesign (like
   StepConverter) — not another bookmark/symlink workaround, that avenue is exhausted.
+- **A long, non-paginated `ForEach` of checkbox rows in a `Form` can crash the app outright at
+  real-library scale, not just render slowly.** Confirmed via two real crash reports from a
+  ~2,000-project, ~14,000-suggestion library: `EXC_CRASH`/`SIGABRT`, `AG::data::table::
+  grow_region()` aborting — SwiftUI's AttributeGraph hit a hard internal node-count limit
+  during a layout pass (`Checkbox.makeNSView` deep inside a `StackLayout`/`DynamicViewList`
+  update, triggered from `NavigationStackLayout.sizeThatFits`), not a slow-but-successful
+  render. `AdminView`'s bulk-review queues (Suggested Relationships/Projects, Duplicates,
+  Pending/Rejected Archives) now each cap how many rows they actually build into the view
+  tree at once (`ShowMoreRow`/`visibleXCount`, default 50/page) — verified fixed by relaunching
+  directly against the real crashing library's data (same bundle ID/container as the release
+  build) and confirming Review's Suggestions page (754 relationships + 13,180 project
+  suggestions) opens, paginates, and lets "Select All" scope to just the visible page without
+  aborting. The sidebar's Projects section got the same treatment for the same reason — a fully
+  recursive `DisclosureGroup` tree of ~2,000 projects rendered inline was an identical risk —
+  replaced with a capped flat list (top 8) plus a link to the (now-searchable) All Projects
+  page, which already used `LazyVGrid`/`List` and didn't need pagination of its own. If a new
+  bulk/admin list is added later, it needs the same treatment before it can be trusted at
+  real-library scale — "it's just a `ForEach`" is not safe by default in this app.
 
 ## Testing conventions
 

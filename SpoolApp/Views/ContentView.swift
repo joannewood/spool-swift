@@ -29,11 +29,33 @@ struct ContentView: View {
                 }
                 Section {
                     Label("All Projects", systemImage: "square.grid.2x2").tag(SidebarSelection.allProjects)
-                    ForEach(projectsViewModel.children(ofParentId: nil)) { project in
-                        ProjectTreeRow(project: project, viewModel: projectsViewModel)
+                    // Flat, capped, top-level-only — deliberately not the old recursive
+                    // `ProjectTreeRow` tree (every level's `DisclosureGroup` expanded
+                    // inline, however deep or wide the tree got). Confirmed via a real
+                    // crash report from a large library that unbounded nested rows in a
+                    // Form/List can blow straight through SwiftUI's AttributeGraph node
+                    // budget and abort the whole process, not just render slowly — see
+                    // the identical fix (and its comment) on AdminView's bulk-review
+                    // sections. A sub-project is still one click away, just not
+                    // pre-built into this sidebar's view tree: via its parent's own
+                    // "Sub-projects" section, or via "All Projects" above (now
+                    // searchable), which lists every project at every depth.
+                    ForEach(sidebarTopLevelProjects) { project in
+                        Label {
+                            Text(project.name)
+                        } icon: {
+                            Image(systemName: "folder.fill").foregroundStyle(project.color.swiftUIColor)
+                        }
+                        .tag(SidebarSelection.project(project.id ?? -1))
                     }
                     if projectsViewModel.allProjects.isEmpty {
                         Text("No projects yet.").foregroundStyle(.secondary).font(.callout)
+                    } else if sidebarHiddenProjectCount > 0 {
+                        Button(action: { selection = .allProjects }) {
+                            Text("\(sidebarHiddenProjectCount) more…")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                     }
                 } header: {
                     HStack {
@@ -144,6 +166,23 @@ struct ContentView: View {
         guard jobStatus.status.pendingJobCount > 0 else { return base }
         let jobsLabel = jobStatus.status.pendingJobCount == 1 ? "1 job" : "\(jobStatus.status.pendingJobCount) jobs"
         return "\(base) — \(jobsLabel) running"
+    }
+
+    /// A glanceable handful, not a browser — Finder's own sidebar Favorites section
+    /// is the model here, not a full outline view. Color-flagged-first-then-name is
+    /// already `children(ofParentId:)`'s own query order, so this is just "the first
+    /// few of those."
+    private static let sidebarProjectCap = 8
+
+    private var sidebarTopLevelProjects: [Project] {
+        Array(projectsViewModel.children(ofParentId: nil).prefix(Self.sidebarProjectCap))
+    }
+
+    /// Counts every project at every depth, not just truncated top-level ones — a
+    /// project that only exists as someone's sub-project would otherwise have no
+    /// visible signal in the sidebar that it exists at all.
+    private var sidebarHiddenProjectCount: Int {
+        max(0, projectsViewModel.allProjects.count - sidebarTopLevelProjects.count)
     }
 }
 
