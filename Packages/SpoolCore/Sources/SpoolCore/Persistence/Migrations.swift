@@ -255,4 +255,32 @@ func registerMigrations(_ migrator: inout DatabaseMigrator) {
             ALTER TABLE files ADD COLUMN active_gallery_image_id INTEGER REFERENCES file_gallery_images(id) ON DELETE SET NULL
             """)
     }
+
+    // v5 only creates a gallery row going forward (`FileGalleryService
+    // .recordRenderedThumbnail`/`matchDesignerPhoto`, both called from the ingest/render
+    // job handlers) — it does nothing for a file that was already rendered before this
+    // feature shipped. Confirmed live on a real ~13,500-file library: every one of them
+    // had a perfectly good `thumbnail_path` but zero `file_gallery_images` rows, so
+    // `FileGalleryCarousel` (which only ever reads the gallery table, never
+    // `thumbnail_path` directly) had nothing to show and fell back to the placeholder
+    // for the entire library. Must be a new migration, not an edit to v5 above — v5 had
+    // already run against real installs by the time this was found, and
+    // `DatabaseMigrator` only runs migrations it hasn't seen by name before.
+    migrator.registerMigration("v6_backfill_gallery_images_from_existing_thumbnails") { db in
+        try db.execute(sql: """
+            INSERT INTO file_gallery_images (file_id, kind, thumbnail_path, sort_order, created_at)
+            SELECT id, 'rendered', thumbnail_path, 1000000, first_seen_at
+            FROM files
+            WHERE thumbnail_path IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM file_gallery_images WHERE file_gallery_images.file_id = files.id)
+            """)
+        try db.execute(sql: """
+            UPDATE files
+            SET active_gallery_image_id = (
+                SELECT id FROM file_gallery_images
+                WHERE file_gallery_images.file_id = files.id AND file_gallery_images.kind = 'rendered'
+            )
+            WHERE active_gallery_image_id IS NULL AND thumbnail_path IS NOT NULL
+            """)
+    }
 }

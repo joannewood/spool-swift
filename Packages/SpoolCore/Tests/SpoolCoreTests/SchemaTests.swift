@@ -78,6 +78,55 @@ import Testing
         #expect(matchCount == 1)
     }
 
+    /// Reproduces a real bug found live: v5 only creates a gallery row going forward
+    /// (via `FileGalleryService`, called from the ingest/render job handlers) — a file
+    /// rendered *before* that migration ran keeps its `thumbnail_path` but never gets a
+    /// `file_gallery_images` row, so `FileGalleryCarousel` (which only reads the
+    /// gallery table) shows a placeholder instead of the perfectly good thumbnail that
+    /// already exists on disk. Confirmed live against a real ~13,500-file library —
+    /// every single file was affected. v6 backfills this; this test builds a database
+    /// stopped right after v5 (simulating an install that already has real files with
+    /// thumbnails but hasn't run v6 yet), then lets the migrator continue, to prove the
+    /// backfill actually runs against realistic pre-existing data, not just fresh rows.
+    @Test func v6BackfillsGalleryRowsForFilesRenderedBeforeTheGalleryFeatureExisted() throws {
+        var migrator = DatabaseMigrator()
+        registerMigrations(&migrator)
+        var config = Configuration()
+        config.prepareDatabase { db in
+            db.add(function: DatabaseFunction("normalize", argumentCount: 1, pure: true) { values in
+                String.fromDatabaseValue(values[0]).map(SpoolTextNormalization.normalize)
+            })
+        }
+        let dbQueue = try DatabaseQueue(configuration: config)
+        try migrator.migrate(dbQueue, upTo: "v5_file_gallery_images")
+
+        let rootId: Int64 = try dbQueue.write { conn in
+            try WatchedRoot(hostPath: "/Users/test/Lib", label: "Library", kind: .library, bookmarkData: Data())
+                .inserted(conn).id!
+        }
+        let fileId: Int64 = try dbQueue.write { conn in
+            try SpoolFile(
+                watchedRootId: rootId, path: "/Users/test/Lib/old.stl", filename: "old.stl", ext: "stl", sizeBytes: 1,
+                thumbnailPath: "42.png", renderStatus: .done
+            ).inserted(conn).id!
+        }
+        // Pre-v6: rendered long ago, no gallery row, matching every real file found live.
+        let preMigrationImageCount = try dbQueue.read { conn in
+            try Int.fetchOne(conn, sql: "SELECT COUNT(*) FROM file_gallery_images WHERE file_id = ?", arguments: [fileId])
+        }
+        #expect(preMigrationImageCount == 0)
+
+        try migrator.migrate(dbQueue)
+
+        let image = try dbQueue.read { conn in
+            try FileGalleryImage.fetchOne(conn, sql: "SELECT * FROM file_gallery_images WHERE file_id = ?", arguments: [fileId])
+        }
+        #expect(image?.kind == .rendered)
+        #expect(image?.thumbnailPath == "42.png")
+        let file = try dbQueue.read { conn in try SpoolFile.fetchOne(conn, id: fileId) }
+        #expect(file?.activeGalleryImageId == image?.id)
+    }
+
     @Test func relationshipRejectsSelfReference() throws {
         let db = try SQLiteSpoolDatabase(path: nil)
         var root = WatchedRoot(hostPath: "/Users/test/Lib", label: "Library", kind: .library, bookmarkData: Data())
