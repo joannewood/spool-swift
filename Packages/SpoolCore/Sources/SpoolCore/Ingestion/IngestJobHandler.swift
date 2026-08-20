@@ -15,12 +15,14 @@ public struct IngestJobHandler: JobHandler {
     private let enqueuer: any JobEnqueuer
     private let relationshipSuggestions: RelationshipSuggestionService
     private let projectSuggestions: ProjectSuggestionService
+    private let gallery: FileGalleryService
 
-    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer) {
+    public init(writer: any DatabaseWriter, enqueuer: any JobEnqueuer, thumbnailsDirectory: URL?) {
         self.writer = writer
         self.enqueuer = enqueuer
         self.relationshipSuggestions = RelationshipSuggestionService(writer: writer)
         self.projectSuggestions = ProjectSuggestionService(writer: writer)
+        self.gallery = FileGalleryService(writer: writer, thumbnailsDirectory: thumbnailsDirectory)
     }
 
     public func handle(_ job: Job) async throws {
@@ -47,6 +49,7 @@ public struct IngestJobHandler: JobHandler {
         // getting its render job.
         try? await relationshipSuggestions.suggestRelationships(forFileId: fileId)
         try? await projectSuggestions.suggestProject(forFileId: fileId)
+        try? await gallery.matchDesignerPhoto(forFileId: fileId, filePath: file.path)
 
         if ModelExtension.stepFormats.contains(ext) {
             try await enqueuer.enqueue(fileId: fileId, zipFileId: nil, jobType: .renderStep)

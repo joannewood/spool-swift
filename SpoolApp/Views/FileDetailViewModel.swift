@@ -14,6 +14,7 @@ final class FileDetailViewModel: ObservableObject {
     @Published private(set) var confirmedProjects: [Project] = []
     @Published private(set) var suggestedProjects: [Project] = []
     @Published private(set) var allProjects: [Project] = []
+    @Published private(set) var galleryImages: [FileGalleryImage] = []
     @Published var lastError: String?
 
     @Published var materialInput: String = ""
@@ -61,6 +62,7 @@ final class FileDetailViewModel: ObservableObject {
             savedPrinted = printedInput
             savedRating = ratingInput
             savedComments = commentsInput
+            galleryImages = try await environment.gallery.images(forFileId: fileId)
         } catch {
             lastError = "\(error)"
         }
@@ -106,6 +108,52 @@ final class FileDetailViewModel: ObservableObject {
         } catch {
             lastError = "\(error)"
         }
+    }
+
+    var activeGalleryImage: FileGalleryImage? {
+        galleryImages.first { $0.id == file.activeGalleryImageId }
+    }
+
+    /// The mockup's "Use as thumbnail" — switches which gallery slide `file
+    /// .thumbnailPath` reflects everywhere else in the app (grid cards, list rows,
+    /// project cards, search results).
+    func useAsThumbnail(_ image: FileGalleryImage) async {
+        guard let fileId = file.id, let imageId = image.id else { return }
+        do {
+            try await environment.gallery.setActive(fileId: fileId, imageId: imageId)
+            file.activeGalleryImageId = imageId
+            file.thumbnailPath = image.thumbnailPath
+        } catch { lastError = "\(error)" }
+    }
+
+    /// The mockup's "Upload & use" — adds a new slide and makes it active in one step.
+    func uploadPhoto(from sourceURL: URL) async {
+        guard let fileId = file.id else { return }
+        do {
+            let image = try await environment.gallery.upload(fileId: fileId, sourceURL: sourceURL)
+            galleryImages.append(image)
+            galleryImages.sort { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
+            file.activeGalleryImageId = image.id
+            file.thumbnailPath = image.thumbnailPath
+        } catch { lastError = "\(error)" }
+    }
+
+    /// Not in the mockup, but a gallery with no way to remove a bad upload felt
+    /// incomplete. Falls back to whichever slide `FileGalleryService.delete` chose
+    /// (always the rendered thumbnail, if this was the active slide) rather than a
+    /// full reload, matching this view model's usual "mutate local state after a
+    /// successful write" convention.
+    func deleteGalleryImage(_ image: FileGalleryImage) async {
+        guard let fileId = file.id, let imageId = image.id else { return }
+        do {
+            try await environment.gallery.delete(imageId: imageId, fileId: fileId)
+            galleryImages.removeAll { $0.id == imageId }
+            if file.activeGalleryImageId == imageId {
+                let rendered = galleryImages.first { $0.kind == .rendered }
+                file.activeGalleryImageId = rendered?.id
+                file.thumbnailPath = rendered?.thumbnailPath
+            }
+        } catch { lastError = "\(error)" }
     }
 
     func addTag(_ name: String) async {

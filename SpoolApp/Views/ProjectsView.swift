@@ -790,6 +790,14 @@ private struct ProjectThumbnailCollage: View {
 /// Review queue for `ProjectService.projectsNeedingNameCleanup()` — per-row apply plus
 /// an "Apply All" bulk action, both routed through the same collision-safe rename path
 /// so two suggestions that clean up to the identical name never collide.
+/// Restyled to match Review's own bulk-review queues (AdminView.swift) — the same
+/// shared `BulkActionBar` (Select All + "Apply Selected (N)" + "Apply All (N)" as one
+/// bar-first row, not this sheet's old separate top toggle/bottom button/toolbar
+/// button) and the same `ShowMoreRow` pagination, since a large library can have just
+/// as many messy project names as suggestions. The old-name-struck-through /
+/// editable-new-name-field row stays — renaming needs an editable field where a plain
+/// confirm/reject queue doesn't — but its trailing action is now a single checkmark
+/// icon button, matching `ConfirmRejectButtons`' visual language elsewhere.
 private struct ProjectCleanupSheet: View {
     @EnvironmentObject private var environment: AppEnvironment
     @Environment(\.dismiss) private var dismiss
@@ -797,9 +805,11 @@ private struct ProjectCleanupSheet: View {
     @State private var editedNames: [Int64: String] = [:]
     @State private var checkedIds: Set<Int64> = []
     @State private var isLoading = true
+    @State private var visibleCount = ProjectCleanupSheet.pageSize
+    private static let pageSize = 50
 
-    private var allChecked: Bool {
-        !suggestions.isEmpty && checkedIds.count == suggestions.count
+    private var visibleSuggestions: [ProjectRenameSuggestion] {
+        Array(suggestions.prefix(visibleCount))
     }
 
     var body: some View {
@@ -813,18 +823,24 @@ private struct ProjectCleanupSheet: View {
                         description: Text("Every project name already looks clean.")
                     )
                 } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Edit any suggestion before applying, or uncheck rows you don't want changed.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .padding(.horizontal).padding(.top, 8)
-                        Toggle("Select all", isOn: Binding(
-                            get: { allChecked },
-                            set: { checkedIds = $0 ? Set(suggestions.compactMap(\.id)) : [] }
-                        ))
-                        .toggleStyle(.checkbox)
-                        .padding(.horizontal).padding(.vertical, 6)
-                        List {
-                            ForEach(suggestions, id: \.id) { suggestion in
+                    Form {
+                        Section("Suggested Renames (\(suggestions.count))") {
+                            Text("Edit any suggestion before applying, or uncheck rows you don't want changed.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            BulkActionBar(
+                                totalCount: suggestions.count,
+                                selectedCount: checkedIds.count,
+                                allSelected: !visibleSuggestions.isEmpty
+                                    && visibleSuggestions.allSatisfy { checkedIds.contains($0.id ?? -1) },
+                                actionLabel: "Apply",
+                                onToggleSelectAll: { isOn in
+                                    let visibleIds = Set(visibleSuggestions.compactMap(\.id))
+                                    if isOn { checkedIds.formUnion(visibleIds) } else { checkedIds.subtract(visibleIds) }
+                                },
+                                onActionSelected: { Task { await applySelected() } },
+                                onActionAll: { Task { await applyAll() } }
+                            )
+                            ForEach(visibleSuggestions, id: \.id) { suggestion in
                                 CleanupSuggestionRow(
                                     suggestion: suggestion,
                                     isChecked: Binding(
@@ -838,25 +854,18 @@ private struct ProjectCleanupSheet: View {
                                     onApply: { Task { await applyOne(suggestion) } }
                                 )
                             }
+                            ShowMoreRow(shownCount: visibleSuggestions.count, totalCount: suggestions.count, pageSize: Self.pageSize) {
+                                visibleCount += Self.pageSize
+                            }
                         }
-                        HStack {
-                            Spacer()
-                            Button("Apply Selected (\(checkedIds.count))") { Task { await applySelected() } }
-                                .disabled(checkedIds.isEmpty)
-                        }
-                        .padding()
                     }
+                    .formStyle(.grouped)
                 }
             }
             .navigationTitle("Clean Up Project Names")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply All (\(suggestions.count))") { Task { await applyAll() } }
-                        .disabled(suggestions.isEmpty)
-                        .help("Applies every suggestion exactly as suggested, ignoring any edits above")
                 }
             }
             .task { await load() }
@@ -919,7 +928,13 @@ private struct CleanupSuggestionRow: View {
                 TextField("New name", text: $editedName)
                     .textFieldStyle(.roundedBorder)
             }
-            Button("Apply", action: onApply)
+            Button(action: onApply) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+            .buttonStyle(.plain)
+            .font(.title3)
+            .help("Apply this rename")
+            .accessibilityLabel("Apply rename to \(editedName)")
         }
         .padding(.vertical, 4)
     }

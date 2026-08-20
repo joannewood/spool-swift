@@ -226,4 +226,33 @@ func registerMigrations(_ migrator: inout DatabaseMigrator) {
     migrator.registerMigration("v4_archive_tool_bookmark") { db in
         try db.execute(sql: "ALTER TABLE app_settings ADD COLUMN archive_tool_bookmark_data BLOB")
     }
+
+    // The file detail page's thumbnail gallery — a native-app addition designed from a
+    // mockup the source app posted for feedback (issue #9 there) but never actually
+    // built. `files.thumbnail_path` stays the single source of truth every other view
+    // (grid cards, list rows, project cards, search results) already reads — it's kept
+    // in sync with whichever gallery image is active, so none of those views needed to
+    // change. `file_gallery_images.file_id` cascades on file deletion the same way
+    // `sidecar_files`/`zip_files` cascade on their watched root; `files
+    // .active_gallery_image_id` is SET NULL instead, matching `parent_project_id` —
+    // losing the active slide (e.g. a deleted upload) should fall back gracefully, not
+    // take the file's own row down with it.
+    migrator.registerMigration("v5_file_gallery_images") { db in
+        try db.execute(sql: """
+            CREATE TABLE file_gallery_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('rendered', 'designer_photo', 'uploaded')),
+                thumbnail_path TEXT NOT NULL,
+                source_path TEXT,
+                label TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """)
+        try db.execute(sql: "CREATE INDEX idx_file_gallery_images_file_id ON file_gallery_images(file_id)")
+        try db.execute(sql: """
+            ALTER TABLE files ADD COLUMN active_gallery_image_id INTEGER REFERENCES file_gallery_images(id) ON DELETE SET NULL
+            """)
+    }
 }

@@ -87,7 +87,7 @@ import Testing
 
         let deferredEnqueuer = DeferredJobEnqueuer()
         let handlers = JobHandlers(
-            ingest: IngestJobHandler(writer: database.writer, enqueuer: deferredEnqueuer),
+            ingest: IngestJobHandler(writer: database.writer, enqueuer: deferredEnqueuer, thumbnailsDirectory: nil),
             render: RenderJobHandler(writer: database.writer, thumbnailsDirectory: thumbsDir),
             renderStep: UnsupportedFormatJobHandler(writer: database.writer),
             rescan: NoOpJobHandler(),

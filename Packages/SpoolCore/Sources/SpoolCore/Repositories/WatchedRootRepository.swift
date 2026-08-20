@@ -28,8 +28,17 @@ public struct WatchedRootRepository: Sendable {
         try await writer.write { conn in try root.inserted(conn) }
     }
 
+    /// Deleting the root row cascades its `files`/`zip_files`/`sidecar_files` away at
+    /// the SQLite FK level (`ON DELETE CASCADE`) — fast, but it means none of
+    /// `FileService`/`ProjectService`'s usual per-file `ProjectCleanup` calls ever run,
+    /// so any auto-created project this root's files were the last members of would
+    /// otherwise be left behind as a dead, empty shell. The sweep runs in the same
+    /// transaction to catch exactly that.
     public func remove(id: Int64) async throws {
-        _ = try await writer.write { conn in try WatchedRoot.deleteOne(conn, id: id) }
+        try await writer.write { conn in
+            _ = try WatchedRoot.deleteOne(conn, id: id)
+            try ProjectCleanup.sweepEmptyAutoCreated(conn: conn)
+        }
     }
 
     public func setActive(id: Int64, active: Bool) async throws {

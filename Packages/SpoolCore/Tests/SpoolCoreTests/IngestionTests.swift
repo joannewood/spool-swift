@@ -49,7 +49,7 @@ private actor RecordingEnqueuer: JobEnqueuer {
         let inserted = try await db.writer.write { conn in try stub.inserted(conn) }
 
         let enqueuer = RecordingEnqueuer()
-        let handler = IngestJobHandler(writer: db.writer, enqueuer: enqueuer)
+        let handler = IngestJobHandler(writer: db.writer, enqueuer: enqueuer, thumbnailsDirectory: nil)
         try await handler.handle(Job(fileId: inserted.id, jobType: .ingest))
 
         let updated = try await db.writer.read { conn in try SpoolFile.fetchOne(conn, id: inserted.id!) }
@@ -74,7 +74,7 @@ private actor RecordingEnqueuer: JobEnqueuer {
         let inserted = try await db.writer.write { conn in try stub.inserted(conn) }
 
         let enqueuer = RecordingEnqueuer()
-        try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer).handle(Job(fileId: inserted.id, jobType: .ingest))
+        try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer, thumbnailsDirectory: nil).handle(Job(fileId: inserted.id, jobType: .ingest))
 
         let calls = await enqueuer.calls
         #expect(calls.first?.jobType == .renderStep)
@@ -94,7 +94,7 @@ private actor RecordingEnqueuer: JobEnqueuer {
             try "content".write(to: fileURL, atomically: true, encoding: .utf8)
             let stub = SpoolFile(watchedRootId: root.id!, path: fileURL.path, filename: filename, ext: ext, sizeBytes: 7)
             let inserted = try await db.writer.write { conn in try stub.inserted(conn) }
-            try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer).handle(Job(fileId: inserted.id, jobType: .ingest))
+            try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer, thumbnailsDirectory: nil).handle(Job(fileId: inserted.id, jobType: .ingest))
         }
 
         let calls = await enqueuer.calls
@@ -113,7 +113,7 @@ private actor RecordingEnqueuer: JobEnqueuer {
         let inserted = try await db.writer.write { conn in try stub.inserted(conn) }
 
         let enqueuer = RecordingEnqueuer()
-        try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer).handle(Job(fileId: inserted.id, jobType: .ingest))
+        try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer, thumbnailsDirectory: nil).handle(Job(fileId: inserted.id, jobType: .ingest))
 
         let updated = try await db.writer.read { conn in try SpoolFile.fetchOne(conn, id: inserted.id!) }
         #expect(updated?.renderStatus == .unsupported)

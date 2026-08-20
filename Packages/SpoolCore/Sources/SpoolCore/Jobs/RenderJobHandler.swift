@@ -14,11 +14,13 @@ public struct RenderJobHandler: JobHandler {
     private let writer: any DatabaseWriter
     private let thumbnailsDirectory: URL
     private let metadataService: PrintMetadataService
+    private let gallery: FileGalleryService
 
     public init(writer: any DatabaseWriter, thumbnailsDirectory: URL) {
         self.writer = writer
         self.thumbnailsDirectory = thumbnailsDirectory
         self.metadataService = PrintMetadataService(writer: writer)
+        self.gallery = FileGalleryService(writer: writer, thumbnailsDirectory: thumbnailsDirectory)
     }
 
     public func handle(_ job: Job) async throws {
@@ -134,6 +136,7 @@ public struct RenderJobHandler: JobHandler {
                 thumbnailPath, file.id,
             ])
         }
+        try? await gallery.recordRenderedThumbnail(fileId: file.id!, thumbnailPath: thumbnailPath)
     }
 
     private func copySVGThumbnail(file: SpoolFile, sourceURL: URL) throws {
@@ -154,6 +157,10 @@ public struct RenderJobHandler: JobHandler {
                 sql: "UPDATE files SET render_status = 'done', render_error = NULL, thumbnail_path = ? WHERE id = ?",
                 arguments: [thumbnailPath, fileId]
             )
+        }
+        // nil for a gcode with no embedded thumbnail — nothing to add to the gallery.
+        if let thumbnailPath {
+            try? await gallery.recordRenderedThumbnail(fileId: fileId, thumbnailPath: thumbnailPath)
         }
     }
 }

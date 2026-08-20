@@ -157,6 +157,20 @@ per change while iterating; save one full per-package `swift test` (no `--filter
 - A fix that reproduces a real incident from the original app's `CLAUDE.md` deserves a comment
   citing it, not just a bare code change — that context is what stops someone "simplifying" the
   guard back out later.
+- The orphaned-empty-project cleanup (`ProjectCleanup`) needed a *third* fix, found live: it
+  didn't account for a project with a child (an emptied auto-created parent would be deleted out
+  from under a still-meaningful nested child), and removing an entire watched root cascades its
+  files away at the SQLite FK level (`ON DELETE CASCADE`) — bypassing every per-file cleanup call
+  entirely, since that path never goes through `FileService`/`ProjectService` at all. Fixed with
+  a children-guard on the single-project check plus a new `sweepEmptyAutoCreated`, called from
+  `WatchedRootRepository.remove(id:)`. Confirmed live against the real leftover shape this left
+  behind (a nested pair of dead projects from an earlier test root that had since been removed).
+- Not every feature request has a Python original to port from. The file detail page's photo
+  gallery (`FileGalleryService`) was designed from a mockup the source app posted for feedback
+  (`docs/mockups/issue-9-thumbnail-gallery.png` there, GitHub issue #9) but never actually
+  built — confirmed by finding no real implementation anywhere in the source app before starting.
+  When there's no ground truth to audit against, say so explicitly and design from the best
+  available spec (the mockup, here) rather than assuming parity-audit methodology applies.
 
 ## Design/HIG conventions established
 

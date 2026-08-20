@@ -34,6 +34,10 @@ Requires **macOS 14 (Sonoma) or later**.
   tessellated through a bundled OpenCASCADE-based converter; a mesh-safety check skips
   pathological files (oversized meshes, exploding 3MF component trees) rather than
   risking a crash.
+- **A photo gallery per file** — if a designer's own photo sits next to a model file
+  with the exact same name (`Widget.stl` + `Widget.jpg`), Spool picks it as the
+  thumbnail automatically; page through it and the rendered mesh, upload your own
+  photo, or switch which one Spool uses as the thumbnail everywhere.
 - **Search and browse** — search-as-you-type across filenames, tags, and print
   metadata (material, printer, slicer, your own notes), filter by extension, sort,
   grid or list view. Hyphens, underscores, and spaces are treated as equivalent, so

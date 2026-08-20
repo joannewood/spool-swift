@@ -650,8 +650,10 @@ struct AdminView: View {
 /// every queue in this window keeps its own `visibleXCount` and slices its backing
 /// array before handing it to `ForEach` (see the comment by those `@State`
 /// declarations for why: a real crash, not just a slow render, confirmed via a crash
-/// report from a large library). Hides itself once every row is already shown.
-private struct ShowMoreRow: View {
+/// report from a large library). Hides itself once every row is already shown. Not
+/// `private` — `ProjectCleanupSheet` (ProjectsView.swift) uses the exact same
+/// component for its own bulk-review-style queue, not a lookalike copy.
+struct ShowMoreRow: View {
     let shownCount: Int
     let totalCount: Int
     let pageSize: Int
@@ -678,8 +680,9 @@ private struct ShowMoreRow: View {
 /// covers whatever's currently visible per the queue's own pagination — see
 /// `ShowMoreRow` — so a checkbox never silently selects rows you can't see; "<verb>
 /// All" is untouched by any of this, since it's always been a true, unpaginated
-/// server-side sweep of the real total.
-private struct BulkActionBar: View {
+/// server-side sweep of the real total. Not `private` — see `ShowMoreRow`'s identical
+/// note; `ProjectCleanupSheet` reuses this exact component too.
+struct BulkActionBar: View {
     let totalCount: Int
     let selectedCount: Int
     let allSelected: Bool

@@ -26,6 +26,7 @@ final class AppEnvironment: ObservableObject {
     let search: SearchService
     let jobQueueStatus: JobQueueStatusService
     let sidecars: SidecarService
+    let gallery: FileGalleryService
     let printMetadata: PrintMetadataService
     let printLog: PrintLogService
     let projects: ProjectService
@@ -48,6 +49,7 @@ final class AppEnvironment: ObservableObject {
         self.search = SearchService(writer: database.writer)
         self.jobQueueStatus = JobQueueStatusService(writer: database.writer)
         self.sidecars = SidecarService(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory)
+        self.gallery = FileGalleryService(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory)
         self.printMetadata = PrintMetadataService(writer: database.writer)
         self.printLog = PrintLogService(writer: database.writer)
         self.projects = ProjectService(writer: database.writer)
@@ -65,7 +67,7 @@ final class AppEnvironment: ObservableObject {
         self.archiveReview = ArchiveReviewService(writer: database.writer, enqueuer: deferredEnqueuer)
 
         let handlers = JobHandlers(
-            ingest: IngestJobHandler(writer: database.writer, enqueuer: deferredEnqueuer),
+            ingest: IngestJobHandler(writer: database.writer, enqueuer: deferredEnqueuer, thumbnailsDirectory: thumbnailsDirectory),
             render: RenderJobHandler(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory),
             renderStep: StepTessellationJobHandler(writer: database.writer, thumbnailsDirectory: thumbnailsDirectory),
             rescan: NoOpJobHandler(),

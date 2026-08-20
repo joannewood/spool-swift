@@ -47,6 +47,21 @@ public enum SuggestionStatus: String, Codable, DatabaseValueConvertible, Sendabl
     case rejected
 }
 
+/// What a `FileGalleryImage` slide actually is — a native-app addition (not in the
+/// source app), designed from a design mockup for the source app's own proposed-but-
+/// never-shipped "thumbnail gallery" (issue #9 there): `rendered` is the mesh
+/// renderer's own thumbnail (always present once rendering succeeds, exactly one per
+/// file, never user-deletable — regenerated in place on re-render, never stealing
+/// activation away from a photo the user's already chosen); `designerPhoto` is a
+/// same-folder image Spool auto-matched to this file by exact base filename at ingest
+/// time (e.g. `Widget.stl` + `Widget.jpg`); `uploaded` is a photo the user picked by
+/// hand via the file detail page's "+ Upload a photo".
+public enum GalleryImageKind: String, Codable, DatabaseValueConvertible, Sendable {
+    case rendered
+    case designerPhoto = "designer_photo"
+    case uploaded
+}
+
 public enum MetadataSource: String, Codable, DatabaseValueConvertible, Sendable {
     case manual
     case autoExtracted3MF = "auto_extracted_3mf"

@@ -1,6 +1,7 @@
 import AppKit
 import SpoolCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FileDetailView: View {
     @EnvironmentObject private var environment: AppEnvironment
@@ -13,6 +14,7 @@ struct FileDetailView: View {
     @State private var showingAddRelationship = false
     @State private var isRenaming = false
     @State private var renameText = ""
+    @State private var showingPhotoUpload = false
     @FocusState private var isAddTagFocused: Bool
     @FocusState private var isPrintLogCommentsFocused: Bool
     @FocusState private var isRenameFieldFocused: Bool
@@ -57,7 +59,6 @@ struct FileDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                openInAppRow
                 // Two columns once there's room for them — tags/projects/relationships
                 // on the left, print metadata/log on the right, rather than one long
                 // vertical stack that leaves most of a wide window empty.
@@ -99,6 +100,35 @@ struct FileDetailView: View {
         ), actions: {
             Button("OK") { viewModel.lastError = nil }
         }, message: { Text(viewModel.lastError ?? "") })
+        // The very top-right of the window, not an in-content row — these are the
+        // file's own "do something with it elsewhere" actions (open in a CAD/slicer
+        // app, reveal on disk, share), the same real-toolbar treatment
+        // ProjectDetailView already gives its own page-level actions.
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                ForEach(viewModel.detectedApps) { app in
+                    Button(action: { viewModel.openInApp(app) }) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
+                            .resizable()
+                            .frame(width: 18, height: 18)
+                    }
+                    .help("Open in \(app.name)")
+                    .accessibilityLabel("Open in \(app.name)")
+                }
+                Button(action: { OpenInAppService.revealInFinder(fileURL: URL(fileURLWithPath: viewModel.file.path)) }) {
+                    Image(systemName: "folder")
+                }
+                .help("Reveal in Finder")
+                .accessibilityLabel("Reveal in Finder")
+                ShareLink(item: URL(fileURLWithPath: viewModel.file.path)) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .help("Share this file")
+            }
+        }
+        .sheet(isPresented: $showingPhotoUpload) {
+            PhotoUploadSheet(onUpload: { url in Task { await viewModel.uploadPhoto(from: url) } })
+        }
     }
 
     private func startRenaming() {
@@ -125,12 +155,39 @@ struct FileDetailView: View {
         )
     }
 
+    private var projectMembershipSummary: String {
+        let names = viewModel.confirmedProjects.map(\.name)
+        if names.count == 1 { return names[0] }
+        return names.joined(separator: ", ")
+    }
+
+    /// "Use as thumbnail" is a cheap, fully-reversible switch — same undo treatment as
+    /// rename/tags/relationships. `backward` re-activates whichever slide was active
+    /// before this click, or does nothing if none was (a file with no render yet and
+    /// no prior photo).
+    private func useAsThumbnailAndRegisterUndo(_ image: FileGalleryImage) {
+        let previous = viewModel.activeGalleryImage
+        performAndRegisterUndo(
+            actionName: "Use as Thumbnail",
+            forward: { await viewModel.useAsThumbnail(image) },
+            backward: {
+                if let previous { await viewModel.useAsThumbnail(previous) }
+            }
+        )
+    }
+
     private var header: some View {
         HStack(alignment: .top, spacing: 16) {
-            thumbnailImage
-                .frame(width: 160, height: 160)
-                .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            FileGalleryCarousel(
+                images: viewModel.galleryImages,
+                activeImageId: viewModel.file.activeGalleryImageId,
+                renderStatus: viewModel.file.renderStatus,
+                ext: viewModel.file.ext,
+                thumbnailsDirectory: environment.thumbnailsDirectory,
+                onUseAsThumbnail: useAsThumbnailAndRegisterUndo,
+                onDelete: { image in Task { await viewModel.deleteGalleryImage(image) } },
+                onUpload: { showingPhotoUpload = true }
+            )
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     // In-place, not a pop-up alert — click the pencil (or the name
@@ -160,6 +217,17 @@ struct FileDetailView: View {
                     }
                 }
                 Text(viewModel.file.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                if !viewModel.confirmedProjects.isEmpty {
+                    // Glanceable the moment the page opens — the full "Projects"
+                    // section further down (with add/remove/suggestions) is the same
+                    // data, but clicking into a file from a project's own page
+                    // shouldn't require scrolling just to confirm which project(s)
+                    // it's actually in.
+                    Label(projectMembershipSummary, systemImage: "folder.fill")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 if let x = viewModel.file.bboxX, let y = viewModel.file.bboxY, let z = viewModel.file.bboxZ {
                     Text(String(format: "%.1f × %.1f × %.1f mm", x, y, z)).font(.callout)
                 }
@@ -177,38 +245,23 @@ struct FileDetailView: View {
                     }
                     .help(viewModel.file.renderError ?? "")
                 }
-                if viewModel.printLog?.printed == true {
-                    printedBadge
+                // Moved up from its own "Printed" section further down the page — a
+                // status this glanceable (and this cheap to flip) belongs with the
+                // rest of the header's at-a-glance facts, not buried a scroll away.
+                // Still a real Toggle underneath (see its own comment on
+                // `printLogSection` for why), just relocated.
+                Toggle(isOn: $viewModel.printedInput) {
+                    Label(
+                        viewModel.printedInput ? "Printed" : "Mark as Printed",
+                        systemImage: viewModel.printedInput ? "checkmark.seal.fill" : "seal"
+                    )
                 }
+                .toggleStyle(.button)
+                .tint(.green)
+                .controlSize(.small)
             }
             Spacer()
         }
-    }
-
-    /// Concrete, visible proof a "Printed" save actually took effect — reads straight
-    /// from `viewModel.printLog` (refreshed after every save), not from the form's own
-    /// input state, so it can't drift out of sync with what's actually persisted.
-    private var printedBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-            Text("Printed")
-            if let rating = viewModel.printLog?.rating {
-                ForEach(1...5, id: \.self) { star in
-                    Image(systemName: star <= rating ? "star.fill" : "star")
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                }
-                .accessibilityHidden(true)
-            }
-        }
-        .font(.callout)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(printedAccessibilityLabel)
-    }
-
-    private var printedAccessibilityLabel: String {
-        guard let rating = viewModel.printLog?.rating else { return "Printed" }
-        return "Printed, \(rating) of 5 stars"
     }
 
     /// Distinguishes the two mesh-safety guards deliberately rejecting a file (working
@@ -227,47 +280,6 @@ struct FileDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var thumbnailImage: some View {
-        if let path = viewModel.file.thumbnailPath,
-           let image = NSImage(contentsOfFile: environment.thumbnailsDirectory.appendingPathComponent(path).path) {
-            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).padding(8)
-        } else {
-            VStack(spacing: 8) {
-                RenderStatusIcon(status: viewModel.file.renderStatus, size: 40)
-                Text(viewModel.file.ext.uppercased()).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var openInAppRow: some View {
-        HStack(spacing: 12) {
-            ForEach(viewModel.detectedApps) { app in
-                Button(action: { viewModel.openInApp(app) }) {
-                    HStack(spacing: 6) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path))
-                            .resizable()
-                            .frame(width: 18, height: 18)
-                        Text(app.name)
-                    }
-                }
-                .help("Open in \(app.name)")
-            }
-            if viewModel.detectedApps.isEmpty {
-                Text("No CAD/slicer apps detected in /Applications").font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button(action: { OpenInAppService.revealInFinder(fileURL: URL(fileURLWithPath: viewModel.file.path)) }) {
-                Label("Reveal in Finder", systemImage: "folder")
-            }
-            .help("Show this file in Finder")
-            ShareLink(item: URL(fileURLWithPath: viewModel.file.path)) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            .help("Share this file")
-        }
-    }
-
     private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -280,6 +292,13 @@ struct FileDetailView: View {
                     Image(systemName: "plus.circle")
                 }
                 .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                // Same fixed box as Projects' Menu-based "+" and Related Files'
+                // Button-based "+" — a `Menu` and a plain `Button` don't share the
+                // same default padding/hit-target even with identical icon content,
+                // so without this their "+"s land at very slightly different
+                // vertical positions despite looking like the same control.
+                .frame(width: 20, height: 20)
                 .help("Add a tag")
                 .accessibilityLabel("Add a tag")
             }
@@ -336,12 +355,16 @@ struct FileDetailView: View {
                     Image(systemName: "plus.circle")
                 }
                 .menuStyle(.borderlessButton)
+                .foregroundStyle(.secondary)
                 // Without this, a `Menu`'s default disclosure chevron sits next to
                 // the icon, throwing this "+" out of alignment with Tags' and
                 // Related Files' plain-`Button` "+" right above and below it —
                 // clicking still opens the same dropdown either way.
                 .menuIndicator(.hidden)
                 .fixedSize()
+                // See Tags' identical note — a `Menu` and a `Button` don't share the
+                // same default padding even with identical icon content.
+                .frame(width: 20, height: 20)
                 .help("Add to a project")
                 .accessibilityLabel("Add to a project")
             }
@@ -433,31 +456,38 @@ struct FileDetailView: View {
         return Text(parts.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
     }
 
+    /// No heading — the "Mark as Printed" toggle that used to introduce this section
+    /// moved up into the header (a status this glanceable belongs with the file's
+    /// other at-a-glance facts, not a scroll away); this is just what shows up
+    /// underneath once that's switched on.
     private var printLogSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Printed").font(.headline)
-            Toggle("I've printed this", isOn: $viewModel.printedInput)
+        VStack(alignment: .leading, spacing: 8) {
             if viewModel.printedInput {
-                HStack {
-                    ForEach(1...5, id: \.self) { star in
-                        // A real Button, not a bare `.onTapGesture` — a tap gesture on
-                        // its own is invisible to VoiceOver and unreachable by keyboard,
-                        // so this control was previously unusable without a mouse.
-                        Button(action: { viewModel.ratingInput = star }) {
-                            Image(systemName: star <= viewModel.ratingInput ? "star.fill" : "star")
-                                .foregroundStyle(.yellow)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        ForEach(1...5, id: \.self) { star in
+                            // A real Button, not a bare `.onTapGesture` — a tap gesture
+                            // on its own is invisible to VoiceOver and unreachable by
+                            // keyboard, so this control was previously unusable
+                            // without a mouse.
+                            Button(action: { viewModel.ratingInput = star }) {
+                                Image(systemName: star <= viewModel.ratingInput ? "star.fill" : "star")
+                                    .foregroundStyle(.yellow)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(star) star\(star == 1 ? "" : "s")")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(star) star\(star == 1 ? "" : "s")")
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Rating")
+                    .accessibilityValue("\(viewModel.ratingInput) of 5 stars")
+                    TextField("Notes on how it turned out", text: $viewModel.commentsInput, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(2...4)
+                        .focused($isPrintLogCommentsFocused)
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Rating")
-                .accessibilityValue("\(viewModel.ratingInput) of 5 stars")
-                TextField("Notes on how it turned out", text: $viewModel.commentsInput, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(2...4)
-                    .focused($isPrintLogCommentsFocused)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
             }
             // Only while there's something to save — was always visible before, so
             // it sat there whether or not the checkbox (or rating/notes) had actually
@@ -485,6 +515,9 @@ struct FileDetailView: View {
                     Image(systemName: "plus.circle")
                 }
                 .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                // See Tags' identical note.
+                .frame(width: 20, height: 20)
                 .help("Add a relationship to another file")
                 .accessibilityLabel("Add a relationship to another file")
             }
@@ -493,7 +526,10 @@ struct FileDetailView: View {
                     Text("\(pair.relationship.type.rawValue.replacingOccurrences(of: "_", with: " ")): \(pair.otherFile.displayName ?? pair.otherFile.filename)")
                     Spacer()
                     Button(action: { removeRelationshipAndRegisterUndo(pair.relationship, otherFileId: pair.otherFile.id) }) {
-                        Image(systemName: "xmark.circle.fill")
+                        // Outline, not filled — matches the outline `plus.circle` used
+                        // by every "add" button on this page, so add/remove read as
+                        // one consistent icon pair rather than two different weights.
+                        Image(systemName: "xmark.circle")
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
@@ -676,9 +712,12 @@ private struct FlowChips<Item: Identifiable>: View {
                     HStack(spacing: 4) {
                         Text(label(item)).font(.caption)
                         Button(action: { onRemove(item) }) {
-                            Image(systemName: "xmark.circle.fill").font(.caption)
+                            // Outline, matching every other remove-x on this page —
+                            // see the identical note on Related Files' own xmark.
+                            Image(systemName: "xmark.circle").font(.caption)
                         }
                         .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                         .help("Remove \(label(item))")
                         .accessibilityLabel("Remove \(label(item))")
                     }
@@ -687,6 +726,204 @@ private struct FlowChips<Item: Identifiable>: View {
                     .background(Capsule().fill(.quaternary))
                 }
             }
+        }
+    }
+}
+
+/// The file detail page's thumbnail gallery — a rendered mesh thumbnail plus any
+/// designer-photo/uploaded slides, one active at a time. Design ported from a mockup
+/// the source app posted for feedback (GitHub issue #9 there) but never actually
+/// built; see `FileGalleryService`'s own doc comment for the full story.
+///
+/// Paging through slides (`selectedIndex`) is separate, local-only UI state from which
+/// slide is actually *active* (`activeImageId`, shown everywhere else in the app) —
+/// looking at a slide shouldn't itself change the file's thumbnail; only an explicit
+/// "Use as thumbnail" click does that.
+private struct FileGalleryCarousel: View {
+    let images: [FileGalleryImage]
+    let activeImageId: Int64?
+    let renderStatus: FileRenderStatus
+    let ext: String
+    let thumbnailsDirectory: URL
+    let onUseAsThumbnail: (FileGalleryImage) -> Void
+    let onDelete: (FileGalleryImage) -> Void
+    let onUpload: () -> Void
+
+    @State private var selectedIndex = 0
+    private static let size: CGFloat = 160
+
+    private var currentImage: FileGalleryImage? {
+        guard images.indices.contains(selectedIndex) else { return nil }
+        return images[selectedIndex]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ZStack(alignment: .top) {
+                thumbnail
+                    .frame(width: Self.size, height: Self.size)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                if images.count > 1 {
+                    HStack {
+                        pagingButton(systemImage: "chevron.left", label: "Previous photo", isEnabled: selectedIndex > 0, action: previous)
+                        Spacer()
+                        pagingButton(
+                            systemImage: "chevron.right", label: "Next photo", isEnabled: selectedIndex < images.count - 1, action: next
+                        )
+                    }
+                    .padding(.horizontal, 4)
+                    .frame(width: Self.size, height: Self.size)
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Text("\(selectedIndex + 1) of \(images.count)")
+                                .font(.caption2).bold()
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(.black.opacity(0.55)))
+                                .foregroundStyle(.white)
+                        }
+                        Spacer()
+                    }
+                    .padding(6)
+                    .frame(width: Self.size, height: Self.size)
+                }
+            }
+            if let currentImage {
+                Text(slideLabel(currentImage))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 8) {
+                    if currentImage.id == activeImageId {
+                        Label("Using this", systemImage: "checkmark.circle.fill")
+                            .font(.caption2).foregroundStyle(.green)
+                    } else {
+                        Button("Use as thumbnail") { onUseAsThumbnail(currentImage) }
+                            .buttonStyle(.link).font(.caption2)
+                    }
+                    if currentImage.kind != .rendered {
+                        Button("Remove", role: .destructive) { onDelete(currentImage) }
+                            .buttonStyle(.link).font(.caption2)
+                    }
+                }
+            }
+            Button("+ Upload a photo", action: onUpload)
+                .buttonStyle(.link).font(.caption2)
+        }
+        .frame(width: Self.size, alignment: .leading)
+        .onAppear { selectActiveOrFirst() }
+        .onChange(of: activeImageId) { _, _ in selectActiveOrFirst() }
+        .onChange(of: images.count) { _, _ in
+            if !images.indices.contains(selectedIndex) { selectedIndex = max(0, images.count - 1) }
+        }
+    }
+
+    private func selectActiveOrFirst() {
+        selectedIndex = images.firstIndex(where: { $0.id == activeImageId }) ?? 0
+    }
+
+    private func previous() { selectedIndex = max(0, selectedIndex - 1) }
+    private func next() { selectedIndex = min(images.count - 1, selectedIndex + 1) }
+
+    private func pagingButton(systemImage: String, label: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.callout).bold()
+                .foregroundStyle(.white)
+                .padding(6)
+                .background(Circle().fill(.black.opacity(0.45)))
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0)
+        .disabled(!isEnabled)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let currentImage, let image = NSImage(contentsOfFile: thumbnailsDirectory.appendingPathComponent(currentImage.thumbnailPath).path) {
+            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).padding(8)
+        } else {
+            // Identical fallback to the pre-gallery single-thumbnail view — a file
+            // with no render yet (or none possible) and no photo match shows the same
+            // pending/failed/unsupported iconography it always did.
+            VStack(spacing: 8) {
+                RenderStatusIcon(status: renderStatus, size: 40)
+                Text(ext.uppercased()).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func slideLabel(_ image: FileGalleryImage) -> String {
+        switch image.kind {
+        case .rendered: return "Rendered thumbnail"
+        case .designerPhoto: return "Designer photo — \(image.label ?? "photo")"
+        case .uploaded: return "Your photo — \(image.label ?? "photo")"
+        }
+    }
+}
+
+/// The mockup's "Upload a photo" dialog — a plain file picker plus a drag-and-drop
+/// target, working identically (no extra native permission dance beyond the picker
+/// itself, which already grants read access to whatever's chosen).
+private struct PhotoUploadSheet: View {
+    let onUpload: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var isDropTargeted = false
+    @State private var pickedURL: URL?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Use Your Own Photo").font(.headline)
+            Text("Pick an image from your computer to use as this file's thumbnail.")
+                .font(.caption).foregroundStyle(.secondary)
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                .foregroundStyle(isDropTargeted ? Color.accentColor : Color.secondary.opacity(0.35))
+                .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.25)))
+                .frame(height: 120)
+                .overlay {
+                    VStack(spacing: 6) {
+                        if let pickedURL {
+                            Image(systemName: "photo").font(.title2).foregroundStyle(.secondary)
+                            Text(pickedURL.lastPathComponent).font(.caption).lineLimit(1)
+                            Button("Choose a Different File…", action: chooseFile)
+                                .buttonStyle(.link).font(.caption2)
+                        } else {
+                            Button("Choose File…", action: chooseFile)
+                            Text("— or drag an image here").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard let url = urls.first else { return false }
+                    pickedURL = url
+                    return true
+                } isTargeted: { isDropTargeted = $0 }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Upload & Use") {
+                    if let pickedURL { onUpload(pickedURL) }
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(pickedURL == nil)
+            }
+        }
+        .padding()
+        .frame(width: 340)
+    }
+
+    private func chooseFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        if panel.runModal() == .OK, let url = panel.url {
+            pickedURL = url
         }
     }
 }

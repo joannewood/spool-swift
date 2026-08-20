@@ -31,6 +31,11 @@ public struct SpoolFile: SpoolIdentifiableRecord, Sendable {
     public var lastSeenAt: Date
     public var mtime: Date?
     public var displayName: String?
+    /// Which `file_gallery_images` row `thumbnailPath` above is currently showing —
+    /// nil until a render or a designer-photo match first sets it. See
+    /// `FileGalleryService`, which is the only thing that ever writes either column,
+    /// always together.
+    public var activeGalleryImageId: Int64?
 
     public init(
         id: Int64? = nil,
@@ -54,7 +59,8 @@ public struct SpoolFile: SpoolIdentifiableRecord, Sendable {
         firstSeenAt: Date = Date(),
         lastSeenAt: Date = Date(),
         mtime: Date? = nil,
-        displayName: String? = nil
+        displayName: String? = nil,
+        activeGalleryImageId: Int64? = nil
     ) {
         self.id = id
         self.watchedRootId = watchedRootId
@@ -78,6 +84,7 @@ public struct SpoolFile: SpoolIdentifiableRecord, Sendable {
         self.lastSeenAt = lastSeenAt
         self.mtime = mtime
         self.displayName = displayName
+        self.activeGalleryImageId = activeGalleryImageId
     }
 }
 

@@ -51,7 +51,7 @@ private actor RescanRecordingEnqueuer: JobEnqueuer {
         let allCalls = await enqueuer.calls
         let newCalls = allCalls.dropFirst(processedCount)
         processedCount = allCalls.count
-        let handler = IngestJobHandler(writer: writer, enqueuer: enqueuer)
+        let handler = IngestJobHandler(writer: writer, enqueuer: enqueuer, thumbnailsDirectory: nil)
         for call in newCalls where call.jobType == .ingest {
             try await handler.handle(Job(fileId: call.fileId, jobType: .ingest))
         }
