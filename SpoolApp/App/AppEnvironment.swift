@@ -90,7 +90,21 @@ final class AppEnvironment: ObservableObject {
         await deferredEnqueuer.attach(jobQueue)
         try? await rootAccess.resolveAll()
         await jobQueue.start()
-        await backfillAllActiveRoots()
+        // Deliberately NOT `backfillAllActiveRoots()` here — confirmed live as a real
+        // bug: `RescanService.run` is already a strict superset of `BackfillService.run`
+        // (its own "genuinely new path" branch falls through to `backfill.stageIfNew`),
+        // but backfill's blind "not in knownPaths → stage as new" check has no idea a
+        // path might be a *move* of a file that's still in the DB at its old, now-gone
+        // location. Running backfill first at every launch meant any file moved/renamed
+        // on disk while the app was closed (a real production scenario: an external tool
+        // reorganizing the watched folders overnight) got a brand-new file/project row
+        // instead of being reunified by content hash — permanently losing its tags/
+        // relationships/print history, and leaving the old row stuck `missing` forever
+        // with an orphaned auto-created project shell (`ProjectCleanup` only sweeps a
+        // project whose *file rows* are gone outright, not merely `missing`). Starting
+        // straight from the first (immediate, no-initial-sleep) periodic rescan pass
+        // gives every launch — not just the steady-state 300s cycle — the hash-based
+        // move check before anything can claim a path as new.
         startWatchingAllActiveRoots()
         startPeriodicRescan()
     }
@@ -122,16 +136,6 @@ final class AppEnvironment: ObservableObject {
         let dropFolderRoot = rootsWithURLs.first { $0.0.kind == .dropFolder }
         for (root, url) in rootsWithURLs {
             _ = try? await rescan.run(root: root, rootURL: url, dropFolderRoot: dropFolderRoot)
-        }
-    }
-
-    /// Re-walks every active root's tree, staging anything not yet known. Safe to call
-    /// repeatedly — cheap when there's nothing new (`files.path` is `UNIQUE`).
-    func backfillAllActiveRoots() async {
-        let rootsWithURLs = await activeRootsWithResolvedURLs()
-        let dropFolderRoot = rootsWithURLs.first { $0.0.kind == .dropFolder }
-        for (root, url) in rootsWithURLs {
-            _ = try? await backfill.run(root: root, rootURL: url, dropFolderRoot: dropFolderRoot)
         }
     }
 

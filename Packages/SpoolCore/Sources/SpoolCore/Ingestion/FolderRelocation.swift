@@ -7,34 +7,57 @@ import Foundation
 /// root — exactly as the source app's `backfill.py` and `rescan.py` both import the same
 /// `ingest.relocate` rather than each having their own copy.
 enum FolderRelocation {
-    /// A file sitting directly at the watched root (no meaningful parent folder), or
-    /// whose parent folder itself contains subdirectories (deliberate scope limit —
-    /// nested multi-level kits don't get full structure preservation), is relocated
-    /// alone. Otherwise the file's parent is a leaf folder, and the whole folder is
-    /// moved as a unit, carrying sidecars along for free. Returns `nil` if a concurrent
-    /// event (a sibling file in the same folder) already relocated it — there's nothing
-    /// left for this call to do.
+    /// A file sitting directly at the watched root (no containing folder at all) is
+    /// relocated alone. Otherwise, the *entire top-level folder* it's found under —
+    /// the direct child of the watched root, however many levels of subfolders and
+    /// sidecar files sit between it and the actual model file — is moved as one unit.
+    ///
+    /// This used to only move the file's *immediate* parent, and only when that
+    /// parent had no subdirectories of its own — deliberately not preserving full
+    /// structure for "nested multi-level kits". Confirmed live that this was a real
+    /// problem, not just a cosmetic scope limit: a Printables/Thingiverse-style
+    /// download's model files almost always sit inside their own subfolder (e.g.
+    /// `<Kit>/files/*.stl` next to `<Kit>/images/*.jpg`) — the old logic saw `files`
+    /// as the leaf-with-no-subdirs and moved *that*, discarding the actually-
+    /// meaningful `<Kit>` name entirely (`ProjectSuggestionService`'s own generic-
+    /// container-name fallback had nowhere left to fall back *to*, since `files` now
+    /// sat directly under the drop folder root with no parent) — hence real projects
+    /// ending up named nothing but "files". It also left every sidecar (images,
+    /// READMEs, licenses) behind in Downloads forever, since only the one leaf
+    /// subfolder ever moved, not the kit's own top-level folder.
+    ///
+    /// Returns `nil` if a concurrent event (a sibling file under the same top-level
+    /// folder) already relocated it — there's nothing left for this call to do.
     static func relocateFileOrFolder(sourceURL: URL, rootURL: URL, dropFolderRootURL: URL) throws -> URL? {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: sourceURL.path) else { return nil }
-        let parentDir = sourceURL.deletingLastPathComponent()
-        let isRootLevel = parentDir.standardizedFileURL.path == rootURL.standardizedFileURL.path
-        if !isRootLevel {
-            var isDir: ObjCBool = false
-            let parentExists = fileManager.fileExists(atPath: parentDir.path, isDirectory: &isDir)
-            if parentExists, isDir.boolValue {
-                let siblings = (try? fileManager.contentsOfDirectory(
-                    at: parentDir, includingPropertiesForKeys: [.isDirectoryKey]
-                )) ?? []
-                let hasSubdirs = siblings.contains {
-                    (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-                }
-                if !hasSubdirs {
-                    return relocateWholeFolder(parentDir: parentDir, sourceURL: sourceURL, dropFolderRootURL: dropFolderRootURL)
-                }
-            }
+        guard let topLevelFolder = topLevelAncestor(of: sourceURL, relativeTo: rootURL) else {
+            return relocateSingleFile(sourceURL: sourceURL, dropFolderRootURL: dropFolderRootURL)
         }
-        return relocateSingleFile(sourceURL: sourceURL, dropFolderRootURL: dropFolderRootURL)
+        return relocateWholeFolder(topLevelFolder: topLevelFolder, sourceURL: sourceURL, dropFolderRootURL: dropFolderRootURL)
+    }
+
+    /// The direct child of `rootURL` that contains `fileURL` — the "package" boundary
+    /// a single download almost always represents, regardless of how many subfolders
+    /// it has inside. `nil` if `fileURL` sits directly at the root with no containing
+    /// folder to preserve at all.
+    ///
+    /// Plain `NSString` path-component manipulation throughout, not `URL`'s own
+    /// `.deletingLastPathComponent()`/`.standardizedFileURL` — confirmed live as a
+    /// real bug: `.standardizedFileURL` silently drops the `/private` prefix from a
+    /// `/private/var/...` path (the same `/var` symlink special-case documented
+    /// elsewhere in this project), so comparing/counting components between a
+    /// `.standardizedFileURL`-derived value and `fileURL`'s own un-touched path (as
+    /// `relocateWholeFolder` below needs to, to reapply the relative path under the
+    /// new location) silently drops one path segment too few.
+    private static func topLevelAncestor(of fileURL: URL, relativeTo rootURL: URL) -> URL? {
+        let rootPath = rootURL.path
+        var currentPath = (fileURL.path as NSString).deletingLastPathComponent
+        guard currentPath != rootPath else { return nil }
+        while (currentPath as NSString).deletingLastPathComponent != rootPath {
+            currentPath = (currentPath as NSString).deletingLastPathComponent
+        }
+        return URL(fileURLWithPath: currentPath)
     }
 
     private static func relocateSingleFile(sourceURL: URL, dropFolderRootURL: URL) -> URL? {
@@ -57,15 +80,23 @@ enum FolderRelocation {
         return destURL
     }
 
-    private static func relocateWholeFolder(parentDir: URL, sourceURL: URL, dropFolderRootURL: URL) -> URL? {
+    private static func relocateWholeFolder(topLevelFolder: URL, sourceURL: URL, dropFolderRootURL: URL) -> URL? {
         let fileManager = FileManager.default
-        let destDir = uniquePath(base: dropFolderRootURL.appendingPathComponent(parentDir.lastPathComponent))
+        guard fileManager.fileExists(atPath: topLevelFolder.path) else { return nil } // already relocated by a concurrent handler
+        let destDir = uniquePath(base: dropFolderRootURL.appendingPathComponent(topLevelFolder.lastPathComponent))
         do {
-            try fileManager.moveItem(at: parentDir, to: destDir)
+            try fileManager.moveItem(at: topLevelFolder, to: destDir)
         } catch {
             return nil // lost the race to a concurrent handler for a sibling file
         }
-        return destDir.appendingPathComponent(sourceURL.lastPathComponent)
+        // `sourceURL` can be several levels below `topLevelFolder` (e.g.
+        // `<Kit>/files/widget.stl`, with `topLevelFolder` == `<Kit>`) — reapply that
+        // same relative path under the new location, not just the file's own bare
+        // name, or the returned URL would point at a location that doesn't exist.
+        // String-prefix-stripping, not `.pathComponents` counting — see
+        // `topLevelAncestor`'s own comment for why mixing the two goes wrong.
+        let relativePath = String(sourceURL.path.dropFirst(topLevelFolder.path.count))
+        return URL(fileURLWithPath: destDir.path + relativePath)
     }
 
     /// Appends a numeric suffix (`Widget` -> `Widget (2)`) until `base` doesn't collide

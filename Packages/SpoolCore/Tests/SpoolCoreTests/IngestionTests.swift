@@ -290,6 +290,54 @@ private actor RecordingEnqueuer: JobEnqueuer {
         #expect(sidecarsAfter == ["README.txt"])
     }
 
+    /// End-to-end regression test for a real bug found live: a Printables/Thingiverse-
+    /// style download almost always nests its model files a level or two below the
+    /// package's own meaningful name (`<Kit>/files/*.stl` next to `<Kit>/images/*.jpg`)
+    /// — `FolderRelocation` used to only move the file's *immediate* parent (`files`,
+    /// itself a `ProjectSuggestionService.isGenericContainerName` match), discarding
+    /// `<Kit>`'s name entirely and leaving that generic-container-name fallback with
+    /// nowhere meaningful left to fall back *to* (the relocated `files` folder ended
+    /// up sitting directly under the drop folder root, no parent left at all) — hence
+    /// real projects ending up named nothing but "files". Confirmed fixed: relocating
+    /// the whole `<Kit>` folder as a unit means `ProjectSuggestionService` still finds
+    /// `<Kit>` one level up from the now-generic `files` folder, exactly as it already
+    /// does for any other generically-named export folder.
+    @Test func relocatedNestedKitGetsNamedAfterItsOwnFolderNotTheGenericInnerOne() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        let dropfolder = try await makeRoot(db, kind: .dropFolder)
+        let downloads = try await db.writer.write { conn in
+            try WatchedRoot(
+                hostPath: "/tmp/downloads3", label: "Downloads", kind: .downloads,
+                ingestMode: .relocateToDropfolder, bookmarkData: Data()
+            ).inserted(conn)
+        }
+        let dropDir = try makeTempDir()
+        let downloadsDir = try makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: dropDir)
+            try? FileManager.default.removeItem(at: downloadsDir)
+        }
+
+        let kitDir = downloadsDir.appendingPathComponent("Water Wheel 835982")
+        let filesDir = kitDir.appendingPathComponent("files")
+        try FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+        try "x".write(to: filesDir.appendingPathComponent("part_a.stl"), atomically: true, encoding: .utf8)
+
+        let enqueuer = RecordingEnqueuer()
+        let backfill = BackfillService(writer: db.writer, enqueuer: enqueuer)
+        _ = try await backfill.run(root: downloads, rootURL: downloadsDir, dropFolderRoot: (root: dropfolder, url: dropDir))
+
+        let stagedFile = try #require(try await db.writer.read { conn in try SpoolFile.fetchAll(conn) }.first)
+        #expect(stagedFile.path == dropDir.appendingPathComponent("Water Wheel 835982/files/part_a.stl").path)
+
+        try await IngestJobHandler(writer: db.writer, enqueuer: enqueuer, thumbnailsDirectory: nil)
+            .handle(Job(fileId: stagedFile.id, jobType: .ingest))
+
+        let projects = try await db.writer.read { conn in try Project.fetchAll(conn) }
+        #expect(projects.count == 1)
+        #expect(projects.first?.name == "Water Wheel 835982", "must fall back past the generic 'files' folder to the kit's own name")
+    }
+
     @Test func backfillNeverIndexesSidecarsAtTheirOriginalPathForARelocateToDropfolderRoot() async throws {
         // A relocate-mode root's sidecars must never be staged at their original
         // (pre-relocate) location — they either move with their folder or are

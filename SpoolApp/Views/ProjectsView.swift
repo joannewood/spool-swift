@@ -83,6 +83,11 @@ struct ProjectDetailView: View {
     /// Drives both the parent/all-projects breadcrumb and sub-project card navigation,
     /// and moves off this project after a successful merge (which deletes it).
     @Binding var selection: SidebarSelection?
+    /// Passed straight through to this project's own `FileDetailView` pushes, for
+    /// project/tag pill clicks on a file reached from here — see `ContentView`'s own
+    /// doc comments on these two.
+    let onNavigate: (SidebarSelection) -> Void
+    let onSearchForTag: (String) -> Void
     @EnvironmentObject private var environment: AppEnvironment
     @EnvironmentObject private var projectsViewModel: ProjectsViewModel
     @State private var files: [SpoolFile] = []
@@ -137,7 +142,9 @@ struct ProjectDetailView: View {
                             }
                             LazyVGrid(columns: columns, spacing: 12) {
                                 ForEach(files) { file in
-                                    NavigationLink(destination: FileDetailView(file: file, environment: environment)) {
+                                    NavigationLink(destination: FileDetailView(
+                                        file: file, environment: environment, onNavigate: onNavigate, onSearchForTag: onSearchForTag
+                                    )) {
                                         FileCardView(file: file, thumbnailsDirectory: environment.thumbnailsDirectory)
                                     }
                                     .buttonStyle(.plain)

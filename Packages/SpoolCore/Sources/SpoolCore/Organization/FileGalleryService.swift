@@ -65,31 +65,77 @@ public struct FileGalleryService: Sendable {
     /// Called once from `IngestJobHandler`, best-effort, for every newly-staged model
     /// file: looks (directly on disk, not via the `sidecar_files` table — that table's
     /// own staging pass runs independently and isn't guaranteed to have already run by
-    /// the time this does) for an image in the same folder whose base filename exactly
-    /// matches this file's own, case-insensitively. A match becomes a `designerPhoto`
-    /// slide and — since this only ever runs once per file, right after it's first
-    /// staged — is auto-activated immediately, matching the mockup's "shown first,
-    /// auto-selected — exact filename match" behavior. Idempotent: a rescan/re-ingest
-    /// that revives an already-matched file is a no-op, not a second slide.
+    /// the time this does) for candidate designer photos in two places:
+    ///
+    /// 1. **The same folder**, by exact base-filename match (`Widget.stl` +
+    ///    `Widget.jpg`) — the original, most specific signal.
+    /// 2. **A sibling `images/` folder** one level down — the other half of the
+    ///    Printables/Thingiverse download convention this project already accounts
+    ///    for elsewhere (model files in one place, preview photos in an adjacent
+    ///    `images/` folder). If this model is the *only* model file in its folder,
+    ///    every photo in `images/` unambiguously belongs to it, named-match or not —
+    ///    added as its own slide each. If it shares the folder with other model files
+    ///    (a multi-part kit), only a filename match inside `images/` is safe to
+    ///    attribute to this specific one, to avoid pinning an unrelated part's photo
+    ///    onto the wrong file.
+    ///
+    /// A match becomes a `designerPhoto` slide; only the first one ever inserted for
+    /// a file is auto-activated (matching the mockup's "shown first, auto-selected"
+    /// behavior for a single photo) — this only ever runs once per file, right after
+    /// it's first staged, so later candidates in the same call just become additional
+    /// browsable slides. Idempotent per source image: a rescan/re-ingest that revives
+    /// an already-matched file never re-adds the same photo as a second slide.
     public func matchDesignerPhoto(forFileId fileId: Int64, filePath: String) async throws {
         let fileURL = URL(fileURLWithPath: filePath)
         let baseName = fileURL.deletingPathExtension().lastPathComponent
         let directory = fileURL.deletingLastPathComponent()
-        guard let entries = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
-        guard let match = entries.first(where: {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey])
+        else { return }
+
+        var candidates: [URL] = []
+        if let sameFolderMatch = imageMatching(baseName: baseName, in: entries) {
+            candidates.append(sameFolderMatch)
+        }
+
+        if let imagesFolder = entries.first(where: {
+            $0.lastPathComponent.caseInsensitiveCompare("images") == .orderedSame
+                && ((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true)
+        }), let imageEntries = try? fileManager.contentsOfDirectory(at: imagesFolder, includingPropertiesForKeys: nil) {
+            let images = imageEntries.filter { SidecarService.imageExtensions.contains($0.pathExtension.lowercased()) }
+            if isOnlyModelFile(in: entries) {
+                candidates.append(contentsOf: images)
+            } else if let nameMatch = imageMatching(baseName: baseName, in: images) {
+                candidates.append(nameMatch)
+            }
+        }
+        guard !candidates.isEmpty else { return }
+
+        for candidate in candidates {
+            let alreadyMatchedCount = try await writer.read { conn in
+                try Int.fetchOne(
+                    conn, sql: "SELECT COUNT(*) FROM file_gallery_images WHERE file_id = ? AND source_path = ?",
+                    arguments: [fileId, candidate.path]
+                ) ?? 0
+            }
+            guard alreadyMatchedCount == 0 else { continue }
+            // `activateOnlyIfNoneActive: true` on every call, not just the first —
+            // its own DB-level guard (`active_gallery_image_id IS NULL`) means only
+            // whichever candidate actually lands first takes over, so this loop
+            // doesn't need to track that itself.
+            _ = try await insertPhoto(fileId: fileId, sourceURL: candidate, kind: .designerPhoto, activateOnlyIfNoneActive: true)
+        }
+    }
+
+    private func imageMatching(baseName: String, in entries: [URL]) -> URL? {
+        entries.first {
             $0.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(baseName) == .orderedSame
                 && SidecarService.imageExtensions.contains($0.pathExtension.lowercased())
-        }) else { return }
-
-        let alreadyMatchedCount = try await writer.read { conn in
-            try Int.fetchOne(
-                conn, sql: "SELECT COUNT(*) FROM file_gallery_images WHERE file_id = ? AND source_path = ?",
-                arguments: [fileId, match.path]
-            ) ?? 0
         }
-        guard alreadyMatchedCount == 0 else { return }
+    }
 
-        _ = try await insertPhoto(fileId: fileId, sourceURL: match, kind: .designerPhoto, activateOnlyIfNoneActive: true)
+    private func isOnlyModelFile(in entries: [URL]) -> Bool {
+        entries.filter { ModelExtension.all.contains($0.pathExtension.lowercased()) }.count == 1
     }
 
     /// The file detail page's "+ Upload a photo" flow — adds a new slide and makes it

@@ -87,6 +87,85 @@ import Testing
         #expect(images.count == 1, "a rescan/re-ingest of the same file must not duplicate the match")
     }
 
+    /// The other half of the Printables/Thingiverse download convention this project
+    /// already accounts for elsewhere: model files in one folder, preview photos in
+    /// an adjacent `images/` folder, often with no filename relationship to the model
+    /// at all (`Widget.stl` next to `images/photo1.jpg`, `images/photo2.jpg`). Since
+    /// this is the *only* model file in its folder, every photo in `images/`
+    /// unambiguously belongs to it.
+    @Test func matchDesignerPhotoUsesEveryImageInASiblingImagesFolderWhenItIsTheOnlyModelFile() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        let rootId = try await makeRoot(db)
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let modelURL = tempDir.appendingPathComponent("Widget.stl")
+        try "x".write(to: modelURL, atomically: true, encoding: .utf8)
+        let imagesDir = tempDir.appendingPathComponent("images")
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        try Data([0xFF, 0xD8]).write(to: imagesDir.appendingPathComponent("photo1.jpg"))
+        try Data([0xFF, 0xD8]).write(to: imagesDir.appendingPathComponent("photo2.jpg"))
+        let fileId = try await makeFile(db, rootId: rootId, path: modelURL.path)
+
+        let service = FileGalleryService(writer: db.writer, thumbnailsDirectory: tempDir.appendingPathComponent("Thumbnails"))
+        try await service.matchDesignerPhoto(forFileId: fileId, filePath: modelURL.path)
+
+        let images = try await service.images(forFileId: fileId)
+        #expect(images.count == 2)
+        #expect(Set(images.map(\.label)) == ["photo1.jpg", "photo2.jpg"])
+        let file = try await fetchFile(db, id: fileId)
+        #expect(file?.activeGalleryImageId != nil, "one of them auto-activated")
+    }
+
+    /// A folder shared by several model files (a multi-part kit) with one `images/`
+    /// folder for all of them — only a filename match is safe to attribute to any one
+    /// specific part, so an unrelated sibling part's photo (or a same-folder extra
+    /// with no name relationship at all) must never get pinned onto the wrong file.
+    @Test func matchDesignerPhotoOnlyUsesANameMatchFromImagesFolderWhenSeveralModelsShareTheFolder() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        let rootId = try await makeRoot(db)
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let partAURL = tempDir.appendingPathComponent("PartA.stl")
+        let partBURL = tempDir.appendingPathComponent("PartB.stl")
+        try "x".write(to: partAURL, atomically: true, encoding: .utf8)
+        try "x".write(to: partBURL, atomically: true, encoding: .utf8)
+        let imagesDir = tempDir.appendingPathComponent("images")
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        try Data([0xFF, 0xD8]).write(to: imagesDir.appendingPathComponent("PartA.jpg"))
+        try Data([0xFF, 0xD8]).write(to: imagesDir.appendingPathComponent("PartB.jpg"))
+        try Data([0xFF, 0xD8]).write(to: imagesDir.appendingPathComponent("overview.jpg"))
+        let fileId = try await makeFile(db, rootId: rootId, path: partAURL.path)
+
+        let service = FileGalleryService(writer: db.writer, thumbnailsDirectory: tempDir.appendingPathComponent("Thumbnails"))
+        try await service.matchDesignerPhoto(forFileId: fileId, filePath: partAURL.path)
+
+        let images = try await service.images(forFileId: fileId)
+        #expect(images.count == 1)
+        #expect(images.first?.label == "PartA.jpg")
+    }
+
+    /// Same-folder exact match still wins even when a sibling `images/` folder also
+    /// exists — both signals are additive, not mutually exclusive.
+    @Test func matchDesignerPhotoCombinesSameFolderMatchWithImagesFolderContents() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        let rootId = try await makeRoot(db)
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let modelURL = tempDir.appendingPathComponent("Widget.stl")
+        try "x".write(to: modelURL, atomically: true, encoding: .utf8)
+        try Data([0xFF, 0xD8]).write(to: tempDir.appendingPathComponent("Widget.jpg"))
+        let imagesDir = tempDir.appendingPathComponent("images")
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        try Data([0xFF, 0xD8]).write(to: imagesDir.appendingPathComponent("angle2.jpg"))
+        let fileId = try await makeFile(db, rootId: rootId, path: modelURL.path)
+
+        let service = FileGalleryService(writer: db.writer, thumbnailsDirectory: tempDir.appendingPathComponent("Thumbnails"))
+        try await service.matchDesignerPhoto(forFileId: fileId, filePath: modelURL.path)
+
+        let images = try await service.images(forFileId: fileId)
+        #expect(Set(images.map(\.label)) == ["Widget.jpg", "angle2.jpg"])
+    }
+
     @Test func recordRenderedThumbnailActivatesOnlyWhenNothingElseIsActive() async throws {
         let db = try SQLiteSpoolDatabase(path: nil)
         let rootId = try await makeRoot(db)

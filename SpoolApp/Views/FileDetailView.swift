@@ -7,6 +7,17 @@ struct FileDetailView: View {
     @EnvironmentObject private var environment: AppEnvironment
     @StateObject private var viewModel: FileDetailViewModel
     @Environment(\.undoManager) private var undoManager
+    /// Switches the main sidebar to a project (clicking a project pill) — same
+    /// "reset the pushed nav path, then change selection" shape as `ContentView`'s own
+    /// project-card navigation, just reachable from wherever this file detail page was
+    /// pushed from (the library grid or a project's own file grid).
+    let onNavigate: (SidebarSelection) -> Void
+    /// Jumps to All Files with this tag's name already in the search field (clicking a
+    /// tag pill) — a plain text search, not the structured tag filter, matching "a
+    /// search for that tag" as asked for; also matches filenames/other metadata
+    /// containing the same text, which is an acceptable, simpler tradeoff than
+    /// threading a whole separate filter-state channel through for one click target.
+    let onSearchForTag: (String) -> Void
     @State private var newTagText = ""
     @State private var showingAddTag = false
     @State private var newProjectName = ""
@@ -19,8 +30,13 @@ struct FileDetailView: View {
     @FocusState private var isPrintLogCommentsFocused: Bool
     @FocusState private var isRenameFieldFocused: Bool
 
-    init(file: SpoolFile, environment: AppEnvironment) {
+    init(
+        file: SpoolFile, environment: AppEnvironment,
+        onNavigate: @escaping (SidebarSelection) -> Void, onSearchForTag: @escaping (String) -> Void
+    ) {
         _viewModel = StateObject(wrappedValue: FileDetailViewModel(file: file, environment: environment))
+        self.onNavigate = onNavigate
+        self.onSearchForTag = onSearchForTag
     }
 
     /// Runs `forward` immediately, and registers `backward` as the system Undo action
@@ -308,7 +324,7 @@ struct FileDetailView: View {
                     forward: { await viewModel.removeTag(tag) },
                     backward: { await viewModel.addTag(tag.name) }
                 )
-            })
+            }, onTap: { tag in onSearchForTag(tag.name) })
             if showingAddTag {
                 HStack {
                     TextField("Add tag…", text: $newTagText)
@@ -374,7 +390,7 @@ struct FileDetailView: View {
                     forward: { await viewModel.removeFromProject(project) },
                     backward: { await viewModel.addToProject(project) }
                 )
-            })
+            }, onTap: { project in onNavigate(.project(project.id ?? -1)) })
 
             if !viewModel.suggestedProjects.isEmpty {
                 Text("Suggested").font(.caption).foregroundStyle(.secondary)
@@ -702,6 +718,11 @@ private struct FlowChips<Item: Identifiable>: View {
     let items: [Item]
     let label: (Item) -> String
     let onRemove: (Item) -> Void
+    /// Optional — a chip's name becomes its own `Button` (a sibling of the remove-x,
+    /// not nested inside it; SwiftUI doesn't hit-test a `Button` inside another
+    /// `Button` reliably) when provided. `nil` keeps a chip's name as plain text, for
+    /// any future reuse of this component where tapping the name shouldn't navigate.
+    var onTap: ((Item) -> Void)?
 
     var body: some View {
         if items.isEmpty {
@@ -710,7 +731,15 @@ private struct FlowChips<Item: Identifiable>: View {
             HStack {
                 ForEach(items) { item in
                     HStack(spacing: 4) {
-                        Text(label(item)).font(.caption)
+                        if let onTap {
+                            Button(action: { onTap(item) }) {
+                                Text(label(item)).font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open \(label(item))")
+                        } else {
+                            Text(label(item)).font(.caption)
+                        }
                         Button(action: { onRemove(item) }) {
                             // Outline, matching every other remove-x on this page —
                             // see the identical note on Related Files' own xmark.

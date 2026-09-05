@@ -102,7 +102,15 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: existingKit.appendingPathComponent("part_a.stl").path))
     }
 
-    @Test func parentWithSubdirectoriesFallsBackToFlatten() throws {
+    /// A file whose containing folder has its *own* subdirectory (e.g. a `nested/`
+    /// folder sitting next to `part_a.stl` inside `Kit/`) used to fall back to
+    /// flattening just this one file, leaving `Kit/` — subdirectory and all — behind
+    /// in Downloads. Confirmed live as a real problem, not just a cosmetic scope
+    /// limit: this is exactly the shape of a real Printables/Thingiverse download
+    /// (`<Kit>/files/*.stl` next to `<Kit>/images/*.jpg`), so the *whole* top-level
+    /// `Kit` folder is now moved as one unit regardless of how deep `part_a.stl` sits
+    /// inside it, carrying every subfolder and sidecar along for free.
+    @Test func topLevelFolderMovesAsAWholeEvenWithNestedSubdirectories() throws {
         let downloadsDir = try makeTempDir()
         let dropDir = try makeTempDir()
         defer {
@@ -110,20 +118,23 @@ import Testing
             try? FileManager.default.removeItem(at: dropDir)
         }
         let kitDir = downloadsDir.appendingPathComponent("Kit")
-        let nestedDir = kitDir.appendingPathComponent("nested")
-        try FileManager.default.createDirectory(at: nestedDir, withIntermediateDirectories: true)
-        let partA = kitDir.appendingPathComponent("part_a.stl")
+        let filesDir = kitDir.appendingPathComponent("files")
+        let imagesDir = kitDir.appendingPathComponent("images")
+        try FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        let partA = filesDir.appendingPathComponent("part_a.stl")
         try "x".write(to: partA, atomically: true, encoding: .utf8)
+        try "x".write(to: imagesDir.appendingPathComponent("preview.jpg"), atomically: true, encoding: .utf8)
+        try "x".write(to: kitDir.appendingPathComponent("README.txt"), atomically: true, encoding: .utf8)
 
         let dest = try FolderRelocation.relocateFileOrFolder(sourceURL: partA, rootURL: downloadsDir, dropFolderRootURL: dropDir)
 
-        // falls back to flattening just this file — the folder (with its subdirectory)
-        // is left in place, not moved as a unit
-        #expect(dest?.path == dropDir.appendingPathComponent("part_a.stl").path)
-        #expect(FileManager.default.fileExists(atPath: dest!.path))
-        var isDir: ObjCBool = false
-        #expect(FileManager.default.fileExists(atPath: kitDir.path, isDirectory: &isDir) && isDir.boolValue, "source folder untouched")
-        #expect(FileManager.default.fileExists(atPath: nestedDir.path))
+        let expectedKitDir = dropDir.appendingPathComponent("Kit")
+        #expect(dest?.path == expectedKitDir.appendingPathComponent("files").appendingPathComponent("part_a.stl").path)
+        #expect(!FileManager.default.fileExists(atPath: kitDir.path), "whole top-level folder moved, not left behind")
+        #expect(FileManager.default.fileExists(atPath: expectedKitDir.appendingPathComponent("files/part_a.stl").path))
+        #expect(FileManager.default.fileExists(atPath: expectedKitDir.appendingPathComponent("images/preview.jpg").path), "sidecar images carried along")
+        #expect(FileManager.default.fileExists(atPath: expectedKitDir.appendingPathComponent("README.txt").path), "sidecar readme carried along")
     }
 
     @Test func alreadyRelocatedByConcurrentHandlerReturnsNil() throws {

@@ -20,6 +20,33 @@ struct ContentView: View {
     // its *own* root push onto a path passed in from outside — this is what lets the
     // grid's keyboard "open" action push a destination the same way a click does.
     @State private var libraryPath = NavigationPath()
+    /// Set by `searchForTag`, consumed once by whichever `LibraryGridView` instance
+    /// appears next (fresh or already-mounted) — see its own `.onChange` for why a
+    /// shared pending value is needed instead of just setting `libraryViewModel
+    /// .searchQuery` directly: that view model is owned inside `LibraryGridView`,
+    /// unreachable from here, and a tag clicked from a project's own file grid means
+    /// `LibraryGridView` may not even exist yet.
+    @State private var pendingLibrarySearch: String?
+
+    /// Clicking a project pill on a file detail page — reachable from either the
+    /// library grid or a project's own file grid, so this lives here rather than
+    /// duplicated in both. Resets `libraryPath` unconditionally, not just on an
+    /// actual selection change: `.onChange(of: selection)` below only fires when the
+    /// value differs, which misses the (quite plausible) case of clicking a file's own
+    /// current project while already several pushes deep inside that same project.
+    private func navigate(to newSelection: SidebarSelection) {
+        libraryPath = NavigationPath()
+        selection = newSelection
+    }
+
+    /// Clicking a tag pill on a file detail page — jumps to All Files with the tag
+    /// name already in the search field. A plain text search, not the structured tag
+    /// filter, matching "a search for that tag" literally.
+    private func searchForTag(_ tagName: String) {
+        libraryPath = NavigationPath()
+        pendingLibrarySearch = tagName
+        selection = .allFiles
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -123,11 +150,14 @@ struct ContentView: View {
             NavigationStack(path: $libraryPath) {
                 switch selection {
                 case .project(let projectId):
-                    ProjectDetailView(projectId: projectId, selection: $selection)
+                    ProjectDetailView(projectId: projectId, selection: $selection, onNavigate: navigate, onSearchForTag: searchForTag)
                 case .allProjects:
                     ProjectsOverviewView(selection: $selection)
                 case .allFiles, .none:
-                    LibraryGridView(selection: $selection, navigationPath: $libraryPath)
+                    LibraryGridView(
+                        selection: $selection, navigationPath: $libraryPath, pendingSearch: $pendingLibrarySearch,
+                        onNavigate: navigate, onSearchForTag: searchForTag
+                    )
                 }
             }
             // The path only ever means something in the library-grid context (a

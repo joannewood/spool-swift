@@ -11,6 +11,13 @@ struct LibraryGridView: View {
     /// Owned by `ContentView` — lets the keyboard "open" action push a destination
     /// exactly the way clicking a `NavigationLink` does, from the same stack.
     @Binding var navigationPath: NavigationPath
+    /// Set by a file detail page's tag-pill click (possibly one pushed from a
+    /// *different* branch entirely, e.g. a project's own file grid) — consumed once
+    /// here and applied to `libraryViewModel.searchQuery`, since that view model is
+    /// owned by this view and unreachable from wherever the click actually happened.
+    @Binding var pendingSearch: String?
+    let onNavigate: (SidebarSelection) -> Void
+    let onSearchForTag: (String) -> Void
     @EnvironmentObject private var environment: AppEnvironment
     @EnvironmentObject private var rootAccess: RootAccessManager
     @EnvironmentObject private var rootsViewModel: RootsViewModel
@@ -170,6 +177,16 @@ struct LibraryGridView: View {
         }
         .task { libraryViewModel.start(writer: environment.database.writer, environment: environment) }
         .task { await projectsViewModel.load() }
+        // `initial: true` — a project's file grid jumping straight to a brand-new
+        // `LibraryGridView` (selection was `.project`, not `.allFiles`) means this
+        // modifier attaches with `pendingSearch` *already* set, not transitioning to
+        // it after mount; a plain `.onChange` treats that as the baseline and never
+        // fires.
+        .onChange(of: pendingSearch, initial: true) { _, newValue in
+            guard let newValue else { return }
+            libraryViewModel.searchQuery = newValue
+            pendingSearch = nil
+        }
         .confirmationDialog(
             "Delete \(selectedFileIds.count) file\(selectedFileIds.count == 1 ? "" : "s")?",
             isPresented: $showingDeleteConfirmation,
@@ -454,7 +471,7 @@ struct LibraryGridView: View {
             return nil
         }.first
         if let file = match {
-            FileDetailView(file: file, environment: environment)
+            FileDetailView(file: file, environment: environment, onNavigate: onNavigate, onSearchForTag: onSearchForTag)
         }
     }
 

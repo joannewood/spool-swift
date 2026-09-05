@@ -59,9 +59,14 @@ public struct ProjectSuggestionService: Sendable {
         guard let root = try await writer.read({ conn in try WatchedRoot.fetchOne(conn, id: file.watchedRootId) })
         else { return }
 
-        let containingFolder = URL(fileURLWithPath: file.path).deletingLastPathComponent().standardizedFileURL
-        let rootURL = URL(fileURLWithPath: root.hostPath).standardizedFileURL
-        guard containingFolder.path != rootURL.path else { return }
+        // Plain `NSString` path manipulation, not `URL`'s own
+        // `.deletingLastPathComponent()`/`.standardizedFileURL` — the same `/private/var`
+        // symlink special-case documented in `FolderRelocation.swift`: `.standardizedFileURL`
+        // silently drops the `/private` prefix from a `/private/var/...` path, so comparing/
+        // matching against `file.path` (which keeps it) would silently never match.
+        let containingFolderPath = (file.path as NSString).deletingLastPathComponent
+        let rootPath = (root.hostPath as NSString).standardizingPath
+        guard containingFolderPath != rootPath else { return }
 
         // One write transaction for the whole thing: siblings are re-queried fresh
         // every call (not just the one file being ingested) so a folder that gets a
@@ -71,15 +76,15 @@ public struct ProjectSuggestionService: Sendable {
         try await writer.write { conn in
             let siblingRows = try Row.fetchAll(
                 conn, sql: "SELECT id, path FROM files WHERE status = 'active' AND path LIKE ?",
-                arguments: ["\(containingFolder.path)/%"]
+                arguments: ["\(containingFolderPath)/%"]
             )
             let siblings = siblingRows.filter { row in
                 let path: String = row["path"]
-                return (path as NSString).deletingLastPathComponent == containingFolder.path
+                return (path as NSString).deletingLastPathComponent == containingFolderPath
             }
             guard !siblings.isEmpty else { return }
 
-            let immediateFolderName = containingFolder.lastPathComponent
+            let immediateFolderName = (containingFolderPath as NSString).lastPathComponent
             // One exception to "even a lone file gets a project": if the folder holds
             // exactly one file and that file's own name is really just its immediate
             // folder's name again, a project of one adds nothing a plain file browse
@@ -94,13 +99,13 @@ public struct ProjectSuggestionService: Sendable {
                 }
             }
 
-            var matchDirectory = containingFolder
+            var matchDirectory = containingFolderPath
             var folderName = immediateFolderName
             if Self.isGenericContainerName(folderName) {
-                let parentFolder = containingFolder.deletingLastPathComponent().standardizedFileURL
-                if parentFolder.path != rootURL.path {
+                let parentFolder = (containingFolderPath as NSString).deletingLastPathComponent
+                if parentFolder != rootPath {
                     matchDirectory = parentFolder
-                    folderName = parentFolder.lastPathComponent
+                    folderName = (parentFolder as NSString).lastPathComponent
                 }
                 // else: the generic-named folder sits directly in the watched root, so
                 // there's no more-meaningful parent to fall back to — keep it.
@@ -108,16 +113,16 @@ public struct ProjectSuggestionService: Sendable {
             folderName = ProjectNaming.cleanName(folderName)
 
             let projectId: Int64
-            if let existing = try Project.filter(Column("source_folder_path") == matchDirectory.path).fetchOne(conn) {
+            if let existing = try Project.filter(Column("source_folder_path") == matchDirectory).fetchOne(conn) {
                 projectId = existing.id!
-            } else if let siblingDirectory = Self.siblingModelPrintPath(matchDirectory.path),
+            } else if let siblingDirectory = Self.siblingModelPrintPath(matchDirectory),
                       let existing = try Project.filter(Column("source_folder_path") == siblingDirectory).fetchOne(conn) {
                 projectId = existing.id!
             } else {
                 let uniqueName = try ProjectService.uniqueProjectName(
-                    folderName, directory: matchDirectory.path, excludingId: nil, conn: conn
+                    folderName, directory: matchDirectory, excludingId: nil, conn: conn
                 )
-                let project = Project(name: uniqueName, sourceFolderPath: matchDirectory.path)
+                let project = Project(name: uniqueName, sourceFolderPath: matchDirectory)
                 projectId = try project.inserted(conn).id!
             }
 
@@ -129,7 +134,7 @@ public struct ProjectSuggestionService: Sendable {
                     """, arguments: [projectId, siblingId])
             }
 
-            try Self.maybeGroupUnderWrapper(projectId: projectId, matchDirectory: matchDirectory.path, root: root, conn: conn)
+            try Self.maybeGroupUnderWrapper(projectId: projectId, matchDirectory: matchDirectory, root: root, conn: conn)
         }
     }
 
