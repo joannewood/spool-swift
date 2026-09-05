@@ -47,10 +47,14 @@ private actor RecordingHandler: JobHandler {
         await queue.start()
         let job = try await queue.enqueue(jobType: .ingest)
 
-        try await waitUntil { await recorder.handledIds.contains(job.id!) }
-
-        let stored = try await fetchJob(db, id: job.id!)
-        #expect(stored?.status == .done)
+        // Poll the terminal DB state directly rather than "handled" then an
+        // un-retried status check — the handler recording its own id and the job
+        // row being marked done are two separate async hops, not one atomic step.
+        try await waitUntil {
+            let stored = try await fetchJob(db, id: job.id!)
+            return stored?.status == .done
+        }
+        #expect(await recorder.handledIds.contains(job.id!))
         await queue.stop()
     }
 
@@ -117,6 +121,69 @@ private actor RecordingHandler: JobHandler {
             return stored?.status == .done
         }
         await queue.stop()
+    }
+
+    /// Confirmed live as a real bug: a STEP-tessellation handler that never returned
+    /// (a Swift-side hang downstream of the converter process, not the converter
+    /// itself) permanently froze the single-concurrency slow lane — every job queued
+    /// behind it sat forever, since `inFlight` never dropped back below `concurrency`.
+    @Test func hungHandlerTimesOutAndDoesNotBlockTheLane() async throws {
+        let db = try SQLiteSpoolDatabase(path: nil)
+        // Two separate gates (not one reused) — a handler call that loses the timeout
+        // race is abandoned, not cancelled, so its own `waitForRelease()` continuation
+        // is still out there and needs its own release to avoid leaking it.
+        let gate1 = Gate()
+        let gate2 = Gate()
+        let handler = SequentialGateHandler(gates: [gate1, gate2])
+        let handlers = JobHandlers(
+            ingest: FastHandler(),
+            render: FastHandler(),
+            renderStep: handler,
+            rescan: FastHandler(),
+            extractZip: FastHandler()
+        )
+        let queue = JobQueue(
+            writer: db.writer, handlers: handlers, fastConcurrency: 1, slowConcurrency: 1,
+            handlerTimeoutSeconds: 0.05
+        )
+        await queue.start()
+
+        let hungJob = try await queue.enqueue(jobType: .renderStep)
+        try await waitUntil { await gate1.isBlocking }
+        try await waitUntil {
+            let stored = try await fetchJob(db, id: hungJob.id!)
+            return stored?.status == .failed
+        }
+        let hungStored = try await fetchJob(db, id: hungJob.id!)
+        #expect(hungStored?.error?.contains("did not finish within") == true)
+
+        // the lane recovered and can claim a second job even though the first
+        // handler call is (as far as the lane is concerned) still out there blocked
+        // on gate1
+        let nextJob = try await queue.enqueue(jobType: .renderStep)
+        try await waitUntil { await gate2.isBlocking }
+        try await waitUntil {
+            let stored = try await fetchJob(db, id: nextJob.id!)
+            return stored?.status == .failed
+        }
+
+        await gate1.release()
+        await gate2.release()
+        await queue.stop()
+    }
+}
+
+/// Blocks on a different gate each call — lets a test drive two independent
+/// never-released waits (one per abandoned handler invocation) without either one
+/// leaking its continuation when the test cleans up.
+private actor SequentialGateHandler: JobHandler {
+    private let gates: [Gate]
+    private var index = 0
+    init(gates: [Gate]) { self.gates = gates }
+    func handle(_ job: Job) async throws {
+        let gate = gates[min(index, gates.count - 1)]
+        index += 1
+        await gate.waitForRelease()
     }
 }
 

@@ -13,14 +13,17 @@ public actor JobQueue {
         writer: any DatabaseWriter,
         handlers: JobHandlers,
         fastConcurrency: Int = ProcessInfo.processInfo.activeProcessorCount,
-        slowConcurrency: Int = 1
+        slowConcurrency: Int = 1,
+        handlerTimeoutSeconds: Double = 180
     ) {
         self.writer = writer
         self.fastLane = JobWorkerLane(
-            jobTypes: JobType.fastLane, concurrency: fastConcurrency, writer: writer, handlers: handlers
+            jobTypes: JobType.fastLane, concurrency: fastConcurrency, writer: writer, handlers: handlers,
+            handlerTimeoutSeconds: handlerTimeoutSeconds
         )
         self.slowLane = JobWorkerLane(
-            jobTypes: JobType.slowLane, concurrency: slowConcurrency, writer: writer, handlers: handlers
+            jobTypes: JobType.slowLane, concurrency: slowConcurrency, writer: writer, handlers: handlers,
+            handlerTimeoutSeconds: handlerTimeoutSeconds
         )
     }
 

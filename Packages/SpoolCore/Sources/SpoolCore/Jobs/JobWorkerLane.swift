@@ -12,11 +12,32 @@ import GRDB
 /// split (`worker` vs `worker-step`), so a slow STEP-tessellation backlog can never
 /// block quick mesh renders.
 public actor JobWorkerLane {
+    struct TimedOutError: Error, CustomStringConvertible {
+        let seconds: Double
+        var description: String { "handler did not finish within \(Int(seconds))s — treated as hung, not still-running" }
+    }
+
+    /// Resumes a `CheckedContinuation` at most once — whichever of the handler call or
+    /// the timeout finishes first wins; the other's eventual result (if it ever
+    /// arrives) is silently dropped rather than triggering Swift's fatal "continuation
+    /// resumed twice" error.
+    private actor OneShotResume {
+        private var continuation: CheckedContinuation<Result<Void, Error>, Never>?
+        init(_ continuation: CheckedContinuation<Result<Void, Error>, Never>) {
+            self.continuation = continuation
+        }
+        func resume(with result: Result<Void, Error>) {
+            continuation?.resume(returning: result)
+            continuation = nil
+        }
+    }
+
     private let jobTypes: Set<JobType>
     private let concurrency: Int
     private let writer: any DatabaseWriter
     private let handlers: JobHandlers
     private let pollInterval: Duration
+    private let handlerTimeoutSeconds: Double
 
     private var inFlight = 0
     private var isRunning = false
@@ -27,13 +48,15 @@ public actor JobWorkerLane {
         concurrency: Int,
         writer: any DatabaseWriter,
         handlers: JobHandlers,
-        pollInterval: Duration = .seconds(5)
+        pollInterval: Duration = .seconds(5),
+        handlerTimeoutSeconds: Double = 180
     ) {
         self.jobTypes = jobTypes
         self.concurrency = max(1, concurrency)
         self.writer = writer
         self.handlers = handlers
         self.pollInterval = pollInterval
+        self.handlerTimeoutSeconds = handlerTimeoutSeconds
     }
 
     public func start() {
@@ -96,11 +119,40 @@ public actor JobWorkerLane {
         }
     }
 
+    /// Confirmed live as a real bug: a single stuck handler call (a STEP-tessellation
+    /// job whose Swift-side thumbnail render never returned, despite the converter
+    /// process itself finishing in under a second when run standalone) permanently
+    /// froze the slow lane — `concurrency = 1` there means `inFlight` never drops back
+    /// below `concurrency`, so `drain()` never claims another job, forever.
+    ///
+    /// Deliberately *not* `withThrowingTaskGroup` for the race: a task group's own
+    /// scope-exit waits for every child it spawned to actually finish, cancelled or
+    /// not — cooperative cancellation only helps a handler that itself checks for it,
+    /// so a truly hung handler would keep the group (and this whole function) hanging
+    /// right along with it, defeating the entire point. Racing two independent,
+    /// unstructured `Task`s against a single one-shot continuation instead means
+    /// whichever finishes first lets `run()` return immediately; a loser that never
+    /// finishes just keeps running unobserved rather than blocking anything.
     private func run(_ job: Job) async {
-        do {
-            try await handlers.handler(for: job.jobType).handle(job)
+        let outcome: Result<Void, Error> = await withCheckedContinuation { continuation in
+            let oneShot = OneShotResume(continuation)
+            Task {
+                do {
+                    try await self.handlers.handler(for: job.jobType).handle(job)
+                    await oneShot.resume(with: .success(()))
+                } catch {
+                    await oneShot.resume(with: .failure(error))
+                }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(self.handlerTimeoutSeconds))
+                await oneShot.resume(with: .failure(TimedOutError(seconds: self.handlerTimeoutSeconds)))
+            }
+        }
+        switch outcome {
+        case .success:
             await complete(job, status: .done, error: nil)
-        } catch {
+        case .failure(let error):
             await complete(job, status: .failed, error: String(describing: error))
         }
     }
