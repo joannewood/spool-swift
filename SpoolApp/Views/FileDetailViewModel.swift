@@ -42,7 +42,8 @@ final class FileDetailViewModel: ObservableObject {
     init(file: SpoolFile, environment: AppEnvironment) {
         self.file = file
         self.environment = environment
-        self.detectedApps = environment.detectedApps
+        let ext = file.ext.lowercased()
+        self.detectedApps = environment.detectedApps.filter { $0.allowedExtensions?.contains(ext) ?? true }
     }
 
     func load() async {
