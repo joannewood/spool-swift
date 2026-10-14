@@ -20,3 +20,4 @@ DerivedData/
 
 # Claude Code local project state
 .claude/
+build/
