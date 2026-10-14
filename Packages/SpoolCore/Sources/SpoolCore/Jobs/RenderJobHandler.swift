@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import GRDB
 import SpoolMesh
@@ -5,6 +6,11 @@ import SpoolMesh
 /// Dispatches a `render` job (fast lane — everything except STEP) by extension to the
 /// right SpoolMesh loader, runs mesh analysis, renders a thumbnail, and writes the
 /// results back to the file's row.
+///
+/// macOS-only (gated by `#if os(macOS)`): depends on `ThumbnailRenderer`, which is
+/// itself macOS-only (AppKit). The iPad companion app never ingests/renders anything —
+/// it only ever reads an already-populated, already-rendered snapshot — so it never
+/// constructs a `JobHandlers`/`JobQueue` at all and never needs this type to exist.
 public struct RenderJobHandler: JobHandler {
     public enum RenderError: Error {
         case missingFileId
@@ -164,3 +170,4 @@ public struct RenderJobHandler: JobHandler {
         }
     }
 }
+#endif

@@ -15,6 +15,10 @@ public struct Project: SpoolIdentifiableRecord, Sendable {
     public var createdAt: Date
     public var sourceFolderPath: String?
     public var color: ProjectColor
+    /// The unit of curation for the iPad companion app's export — the user chose
+    /// per-project sharing specifically (not a tag), so `IPadExportService` includes
+    /// exactly the projects with this flag set, and nothing else.
+    public var sharedWithIpad: Bool
 
     public init(
         id: Int64? = nil,
@@ -23,7 +27,8 @@ public struct Project: SpoolIdentifiableRecord, Sendable {
         parentProjectId: Int64? = nil,
         createdAt: Date = Date(),
         sourceFolderPath: String? = nil,
-        color: ProjectColor = .blue
+        color: ProjectColor = .blue,
+        sharedWithIpad: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -32,6 +37,7 @@ public struct Project: SpoolIdentifiableRecord, Sendable {
         self.createdAt = createdAt
         self.sourceFolderPath = sourceFolderPath
         self.color = color
+        self.sharedWithIpad = sharedWithIpad
     }
 }
 

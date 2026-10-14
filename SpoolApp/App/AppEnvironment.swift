@@ -37,6 +37,7 @@ final class AppEnvironment: ObservableObject {
     let detectedApps: [DetectedApp]
     private let deferredEnqueuer: DeferredJobEnqueuer
     private var rescanTask: Task<Void, Never>?
+    private var ipadExportTask: Task<Void, Never>?
 
     init() throws {
         let database = try SQLiteSpoolDatabase(path: try SQLiteSpoolDatabase.defaultPath())
@@ -107,6 +108,7 @@ final class AppEnvironment: ObservableObject {
         // move check before anything can claim a path as new.
         startWatchingAllActiveRoots()
         startPeriodicRescan()
+        startPeriodicIpadExport()
     }
 
     /// Native equivalent of the source app's timer-driven worker loop: sleeps for
@@ -126,6 +128,35 @@ final class AppEnvironment: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
             }
         }
+    }
+
+    /// Same shape as `startPeriodicRescan()` — re-read enabled/interval each cycle so a
+    /// settings change takes effect on the next tick, skip the whole cycle while
+    /// disabled or no folder has been granted yet.
+    private func startPeriodicIpadExport() {
+        ipadExportTask?.cancel()
+        ipadExportTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let settings = (try? await self.appSettings.get()) ?? AppSettings()
+                if settings.ipadExportEnabled, let bookmarkData = settings.ipadExportFolderBookmarkData {
+                    await self.exportToIPad(bookmarkData: bookmarkData)
+                }
+                let interval = max(settings.ipadExportIntervalSeconds, AppSettings.minIpadExportIntervalSeconds)
+                try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
+            }
+        }
+    }
+
+    /// Resolves a short-lived security-scoped access to the export folder just for this
+    /// one export pass — unlike watched roots (held open for the app's whole lifetime),
+    /// there's no ongoing need to keep this folder accessible between export cycles.
+    private func exportToIPad(bookmarkData: Data) async {
+        guard let access = try? SecurityScopedAccess.resolve(bookmarkData: bookmarkData) else { return }
+        defer { access.stop() }
+        _ = try? await IPadExportService.export(
+            from: database.writer, sourceThumbnailsDirectory: thumbnailsDirectory, to: access.url
+        )
     }
 
     /// Re-walks every active root's tree, reconciling drift/moves/missing files against

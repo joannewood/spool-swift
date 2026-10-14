@@ -283,4 +283,28 @@ func registerMigrations(_ migrator: inout DatabaseMigrator) {
             WHERE active_gallery_image_id IS NULL AND thumbnail_path IS NOT NULL
             """)
     }
+
+    // The iPad companion app browses a curated subset of the library, not the whole
+    // thing — a project explicitly marked shared here is the unit of curation (not a
+    // tag: the user chose per-project sharing specifically). `IPadExportService` reads
+    // this flag to decide what goes into the exported snapshot.
+    migrator.registerMigration("v7_project_shared_with_ipad") { db in
+        try db.execute(sql: "ALTER TABLE projects ADD COLUMN shared_with_ipad BOOLEAN NOT NULL DEFAULT 0")
+    }
+
+    // The export destination folder is granted the same way a watched root is (an
+    // NSOpenPanel + security-scoped bookmark) but is deliberately *not* a
+    // `watched_roots` row — it isn't something the app watches for new files, it's
+    // somewhere the app *writes* a curated snapshot to, a different enough concept
+    // that folding it into `watched_roots.kind` (whose CHECK constraint SQLite can't
+    // alter in place anyway) would be more confusing than a few dedicated columns.
+    migrator.registerMigration("v8_ipad_export_settings") { db in
+        try db.execute(sql: """
+            ALTER TABLE app_settings ADD COLUMN ipad_export_enabled BOOLEAN NOT NULL DEFAULT 0
+            """)
+        try db.execute(sql: """
+            ALTER TABLE app_settings ADD COLUMN ipad_export_interval_seconds INTEGER NOT NULL DEFAULT 300
+            """)
+        try db.execute(sql: "ALTER TABLE app_settings ADD COLUMN ipad_export_folder_bookmark_data BLOB")
+    }
 }

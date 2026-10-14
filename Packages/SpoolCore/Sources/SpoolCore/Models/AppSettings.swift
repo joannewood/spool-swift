@@ -12,22 +12,33 @@ public struct AppSettings: SpoolRecord, Sendable {
     public var rescanIntervalSeconds: Int
     public var updatedAt: Date
     public var autoAcceptArchives: Bool
+    public var ipadExportEnabled: Bool
+    public var ipadExportIntervalSeconds: Int
+    public var ipadExportFolderBookmarkData: Data?
 
     public static let singletonId: Int64 = 1
     public static let minRescanIntervalSeconds = 30
     public static let defaultRescanIntervalSeconds = 300
+    public static let minIpadExportIntervalSeconds = 60
+    public static let defaultIpadExportIntervalSeconds = 300
 
     public init(
         id: Int64 = AppSettings.singletonId,
         rescanEnabled: Bool = true,
         rescanIntervalSeconds: Int = AppSettings.defaultRescanIntervalSeconds,
         updatedAt: Date = Date(),
-        autoAcceptArchives: Bool = false
+        autoAcceptArchives: Bool = false,
+        ipadExportEnabled: Bool = false,
+        ipadExportIntervalSeconds: Int = AppSettings.defaultIpadExportIntervalSeconds,
+        ipadExportFolderBookmarkData: Data? = nil
     ) {
         self.id = id
         self.rescanEnabled = rescanEnabled
         self.rescanIntervalSeconds = rescanIntervalSeconds
         self.updatedAt = updatedAt
         self.autoAcceptArchives = autoAcceptArchives
+        self.ipadExportEnabled = ipadExportEnabled
+        self.ipadExportIntervalSeconds = ipadExportIntervalSeconds
+        self.ipadExportFolderBookmarkData = ipadExportFolderBookmarkData
     }
 }

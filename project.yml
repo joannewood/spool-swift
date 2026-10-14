@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.joannewood
   deploymentTarget:
     macOS: "14.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 
 packages:
@@ -71,10 +72,43 @@ targets:
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
+  SpoolPad:
+    type: application
+    platform: iOS
+    sources:
+      - path: SpoolPad/App
+      - path: SpoolPad/Views
+    dependencies:
+      # Not SpoolMesh/SpoolFS directly — SpoolMesh comes along transitively via
+      # SpoolCore's own dependency (needed only to satisfy the module graph; its
+      # AppKit-dependent code is `#if os(macOS)`-gated and never called from here),
+      # and SpoolFS (FSEvents watching) is never needed at all — this app only ever
+      # reads an already-exported snapshot, it never watches a folder itself.
+      - package: SpoolCore
+    settings:
+      base:
+        PRODUCT_NAME: SpoolPad
+        PRODUCT_BUNDLE_IDENTIFIER: com.joannewood.SpoolPad
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: U8NA3U6GZF
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait
+        TARGETED_DEVICE_FAMILY: "2"
+
 schemes:
   Spool:
     build:
       targets:
         SpoolApp: all
+    run:
+      config: Debug
+  SpoolPad:
+    build:
+      targets:
+        SpoolPad: all
     run:
       config: Debug

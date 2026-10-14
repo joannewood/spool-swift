@@ -82,4 +82,12 @@ final class ProjectsViewModel: ObservableObject {
             await load()
         } catch { lastError = "\(error)" }
     }
+
+    func setSharedWithIpad(_ project: Project, to shared: Bool) async {
+        guard let id = project.id else { return }
+        do {
+            try await environment.projects.setSharedWithIpad(projectId: id, to: shared)
+            await load()
+        } catch { lastError = "\(error)" }
+    }
 }

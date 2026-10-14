@@ -26,6 +26,28 @@ public final class SQLiteSpoolDatabase: SpoolDatabase, Sendable {
         try Self.migrator.migrate(writer)
     }
 
+    private init(writer: any DatabaseWriter) {
+        self.writer = writer
+    }
+
+    /// Opens an already-migrated file strictly read-only, skipping the migrator
+    /// entirely — for a consumer (the iPad companion app, reading a synced export
+    /// snapshot) that only ever reads a file someone else already wrote and migrated,
+    /// never writes to it. Using `init(path:)` here would be wrong twice over: it
+    /// needs write access to run migration bookkeeping, and running migrations against
+    /// a snapshot outside this process's control is the wrong operation regardless.
+    /// `normalize()` is still registered — read queries (search in particular) call it
+    /// directly, not just the insert/update triggers that maintain the shadow columns.
+    public static func openReadOnly(path: String) throws -> SQLiteSpoolDatabase {
+        var config = Configuration()
+        config.readonly = true
+        config.prepareDatabase { db in
+            db.add(function: Self.normalizeFunction)
+        }
+        let queue = try DatabaseQueue(path: path, configuration: config)
+        return SQLiteSpoolDatabase(writer: queue)
+    }
+
     private static let normalizeFunction = DatabaseFunction(
         "normalize", argumentCount: 1, pure: true
     ) { values in

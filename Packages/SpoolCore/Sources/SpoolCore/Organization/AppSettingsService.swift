@@ -44,4 +44,32 @@ public struct AppSettingsService: Sendable {
             )
         }
     }
+
+    /// `intervalSeconds` floored the same way `updateRescan` floors the rescan
+    /// interval, for the same reason — a typo in the settings form shouldn't turn the
+    /// export loop into a tight poll.
+    public func updateIpadExport(enabled: Bool, intervalSeconds: Int) async throws {
+        let flooredInterval = max(intervalSeconds, AppSettings.minIpadExportIntervalSeconds)
+        try await writer.write { conn in
+            try conn.execute(
+                sql: """
+                    UPDATE app_settings
+                    SET ipad_export_enabled = ?, ipad_export_interval_seconds = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                arguments: [enabled, flooredInterval, Date(), AppSettings.singletonId]
+            )
+        }
+    }
+
+    /// `nil` clears a previously-granted folder (e.g. the user revokes access in
+    /// Settings) without needing a separate "unset" method.
+    public func updateIpadExportFolderBookmark(_ data: Data?) async throws {
+        try await writer.write { conn in
+            try conn.execute(
+                sql: "UPDATE app_settings SET ipad_export_folder_bookmark_data = ?, updated_at = ? WHERE id = ?",
+                arguments: [data, Date(), AppSettings.singletonId]
+            )
+        }
+    }
 }

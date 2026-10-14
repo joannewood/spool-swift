@@ -102,6 +102,14 @@ public struct ProjectService: Sendable {
         }
     }
 
+    /// The unit of curation for the iPad companion app's export — see
+    /// `IPadExportService`, which reads this flag directly.
+    public func setSharedWithIpad(projectId: Int64, to shared: Bool) async throws {
+        try await writer.write { conn in
+            try conn.execute(sql: "UPDATE projects SET shared_with_ipad = ? WHERE id = ?", arguments: [shared, projectId])
+        }
+    }
+
     /// Confirmed membership only — a suggested-but-not-yet-reviewed membership doesn't
     /// belong on the project's own "these are my files" page.
     public func confirmedFiles(inProjectId projectId: Int64) async throws -> [SpoolFile] {
@@ -163,6 +171,7 @@ public struct ProjectService: Sendable {
                 SELECT p.id AS id, p.name AS name, p.description AS description,
                        p.parent_project_id AS parent_project_id, p.created_at AS created_at,
                        p.source_folder_path AS source_folder_path, p.color AS color,
+                       p.shared_with_ipad AS shared_with_ipad,
                        COUNT(DISTINCT CASE WHEN pf.status = 'confirmed' THEN pf.file_id END) AS file_count,
                        COUNT(DISTINCT CASE WHEN cl.descendant_id != p.id THEN cl.descendant_id END) AS subproject_count
                 FROM projects p

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Metal
 import SceneKit
@@ -149,3 +150,4 @@ public enum ThumbnailRenderer {
         return node
     }
 }
+#endif

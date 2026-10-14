@@ -215,6 +215,18 @@ struct ProjectDetailView: View {
                 Button("Merge Into…", systemImage: "arrow.triangle.merge") { showingMerge = true }
                     .help("Merge this project's files and sub-projects into another project, then delete it")
             }
+            ToolbarItem {
+                let shared = project?.sharedWithIpad ?? false
+                Button {
+                    if let project {
+                        Task { await projectsViewModel.setSharedWithIpad(project, to: !shared) }
+                    }
+                } label: {
+                    Image(systemName: shared ? "ipad.and.arrow.forward" : "ipad")
+                }
+                .help(shared ? "Shared to iPad — click to stop sharing" : "Not shared to iPad — click to share")
+                .accessibilityLabel(shared ? "Shared to iPad" : "Not shared to iPad")
+            }
         }
         .sheet(isPresented: $showingMerge) {
             MergeProjectSheet(sourceProjectId: projectId, onMerged: {

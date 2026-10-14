@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "SpoolCore",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "SpoolCore", targets: ["SpoolCore"])
     ],

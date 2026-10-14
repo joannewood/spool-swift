@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import GRDB
 import SpoolMesh
@@ -8,6 +9,11 @@ import SpoolMesh
 /// `MeshAnalyzer.analyze()` + `ThumbnailRenderer.renderPNG()` pipeline `RenderJobHandler`
 /// uses for STL/OBJ/3MF, via the same `STLParser` (the helper writes binary STL in
 /// precisely the layout that parser expects).
+///
+/// macOS-only (gated by `#if os(macOS)`): depends on `Process` (unavailable on iOS —
+/// subprocess execution is prohibited there entirely) and `ThumbnailRenderer`
+/// (AppKit). See `RenderJobHandler`'s equivalent note — the iPad companion app never
+/// ingests/renders and never needs this type to exist.
 public struct StepTessellationJobHandler: JobHandler {
     public enum HandlerError: Error {
         case missingFileId
@@ -101,3 +107,4 @@ public struct StepTessellationJobHandler: JobHandler {
         }
     }
 }
+#endif

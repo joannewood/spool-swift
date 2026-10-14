@@ -29,6 +29,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             FoldersSettingsPane(rootsViewModel: rootsViewModel)
                 .tabItem { Label("Folders", systemImage: "folder") }
+            IPadSettingsPane(viewModel: viewModel)
+                .tabItem { Label("iPad", systemImage: "ipad") }
         }
         .frame(width: 480, height: 420)
         .task { await viewModel.load() }
@@ -83,6 +85,57 @@ private struct GeneralSettingsPane: View {
                 Text("Spool can't look inside .7z/.rar archives — extract those manually and Spool will pick up the extracted files.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// The iPad companion app browses a curated subset of the library, exported into a
+/// folder synced elsewhere (typically iCloud Drive) — not a live connection, so this
+/// is entirely "grant a folder + a cadence" configuration, same shape as the Watching
+/// section above. Which projects are included is set per-project (the "share to iPad"
+/// toolbar button on each project's detail page), not here — this pane only owns
+/// where the export goes and how often.
+private struct IPadSettingsPane: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        Form {
+            Section("Export Folder") {
+                if let path = viewModel.ipadExportFolderPath {
+                    HStack {
+                        Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Change…") { Task { await viewModel.grantIpadExportFolder() } }
+                        Button("Remove", role: .destructive) { Task { await viewModel.clearIpadExportFolder() } }
+                    }
+                } else {
+                    HStack {
+                        Text("No folder granted yet.").foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Choose…") { Task { await viewModel.grantIpadExportFolder() } }
+                    }
+                }
+                Text("Choose a folder synced to your iPad (via iCloud Drive or similar). Spool writes a curated copy of whichever projects you've marked “Shared to iPad” into it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Export Schedule") {
+                Toggle("Export automatically", isOn: Binding(
+                    get: { viewModel.settings.ipadExportEnabled },
+                    set: { newValue in Task { await viewModel.saveIpadExportSettings(enabled: newValue) } }
+                ))
+                .disabled(viewModel.ipadExportFolderPath == nil)
+                .help("When on, Spool periodically re-exports your shared projects into the export folder")
+                Stepper(
+                    "Export every \(viewModel.ipadExportIntervalMinutesInput) minute\(viewModel.ipadExportIntervalMinutesInput == 1 ? "" : "s")",
+                    value: $viewModel.ipadExportIntervalMinutesInput, in: 1...60
+                )
+                .disabled(!viewModel.settings.ipadExportEnabled)
+                .onChange(of: viewModel.ipadExportIntervalMinutesInput) { _, _ in
+                    Task { await viewModel.saveIpadExportSettings(enabled: viewModel.settings.ipadExportEnabled) }
+                }
             }
         }
         .formStyle(.grouped)
