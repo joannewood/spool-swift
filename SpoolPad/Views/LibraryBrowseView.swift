@@ -29,11 +29,11 @@ struct LibraryBrowseView: View {
                     Button {
                         showingPrintQueueSettings = true
                     } label: {
-                        // Not "printer" — that reads as a regular office printer. "cube.fill"
-                        // (filled, vs. the plain "cube" used for a file's missing-thumbnail
-                        // placeholder) reads as a 3D object/print, no literal nozzle glyph
-                        // exists in SF Symbols to use instead.
-                        Label("Print Queue Setup", systemImage: "cube.fill")
+                        // The actual Saddle & STEM print-queue icon (same asset the
+                        // capture-extension browser extension uses — see
+                        // print-manager/capture-extension/icons/), not an SF Symbol
+                        // substitute — keeps the two apps visually consistent.
+                        Label("Print Queue Setup", image: "PrintQueueIcon")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

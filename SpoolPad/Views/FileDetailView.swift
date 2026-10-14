@@ -36,7 +36,7 @@ struct FileDetailView: View {
                 Button {
                     showingSendToPrintQueue = true
                 } label: {
-                    Label("Send to Print Queue", systemImage: "cube.fill")
+                    Label("Send to Print Queue", image: "PrintQueueIcon")
                 }
                 ShareLink(item: localFileURL) {
                     Label("Print / Share", systemImage: "square.and.arrow.up")
