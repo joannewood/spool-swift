@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct SpoolPadApp: App {
     @StateObject private var libraryAccess = LibraryAccess()
+    @StateObject private var printQueueSettings = PrintQueueSettings()
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,7 @@ struct SpoolPadApp: App {
                 }
             }
             .environmentObject(libraryAccess)
+            .environmentObject(printQueueSettings)
         }
     }
 }
