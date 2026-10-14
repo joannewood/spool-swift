@@ -29,7 +29,11 @@ struct LibraryBrowseView: View {
                     Button {
                         showingPrintQueueSettings = true
                     } label: {
-                        Label("Print Queue Setup", systemImage: "printer")
+                        // Not "printer" — that reads as a regular office printer. "cube.fill"
+                        // (filled, vs. the plain "cube" used for a file's missing-thumbnail
+                        // placeholder) reads as a 3D object/print, no literal nozzle glyph
+                        // exists in SF Symbols to use instead.
+                        Label("Print Queue Setup", systemImage: "cube.fill")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -47,7 +51,14 @@ struct LibraryBrowseView: View {
                 LibrarySettingsView()
             }
         } detail: {
-            libraryDetail
+            // `NavigationLink(value:)`/`.navigationDestination(for:)` inside
+            // `libraryDetail` need an actual `NavigationStack` to push into — a
+            // `NavigationSplitView`'s `detail:` column isn't one by itself. Without
+            // this, tapping a file card on iPad's regular-width split layout silently
+            // did nothing (confirmed live: no error, no navigation, just inert taps).
+            NavigationStack {
+                libraryDetail
+            }
         }
         .refreshable { await refresh() }
         .task {
