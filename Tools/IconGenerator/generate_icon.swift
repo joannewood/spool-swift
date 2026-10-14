@@ -149,7 +149,9 @@ let appIconSpecs: [IconSpec] = [
 /// all, independent of any icon *cache* (there was nothing valid to cache in the first
 /// place). Drawing into an explicitly-sized bitmap rep instead is unaffected by the
 /// current display's scale factor.
-func renderPixelExact(pixelSize: Int, draw: (CGContext, CGFloat) -> Void) -> Data {
+/// `opaque` drops the alpha channel entirely, which App Store Connect requires for iOS
+/// app icons.
+func renderPixelExact(pixelSize: Int, opaque: Bool = false, draw: (CGContext, CGFloat) -> Void) -> Data {
     guard let bitmap = NSBitmapImageRep(
         bitmapDataPlanes: nil, pixelsWide: pixelSize, pixelsHigh: pixelSize,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -163,17 +165,32 @@ func renderPixelExact(pixelSize: Int, draw: (CGContext, CGFloat) -> Void) -> Dat
     let ctx = NSGraphicsContext(bitmapImageRep: bitmap)!
     NSGraphicsContext.current = ctx
     draw(ctx.cgContext, CGFloat(pixelSize))
-    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+    var output = bitmap
+    if opaque {
+        // Core Graphics can't draw into an alpha-less bitmap directly, so copy the
+        // finished drawing into one that skips the alpha byte.
+        guard let source = bitmap.cgImage,
+              let flat = CGContext(
+                  data: nil, width: pixelSize, height: pixelSize, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+              ) else {
+            fatalError("failed to flatten a \(pixelSize)x\(pixelSize) bitmap")
+        }
+        flat.draw(source, in: CGRect(x: 0, y: 0, width: pixelSize, height: pixelSize))
+        output = NSBitmapImageRep(cgImage: flat.makeImage()!)
+    }
+    guard let png = output.representation(using: .png, properties: [:]) else {
         fatalError("failed to encode a \(pixelSize)x\(pixelSize) PNG")
     }
     return png
 }
 
-func drawAppIcon(pixelSize: Int) -> Data {
-    renderPixelExact(pixelSize: pixelSize) { ctx, size in
+/// `fullBleed` draws a plain opaque square for iOS, which applies its own corner mask.
+func drawAppIcon(pixelSize: Int, fullBleed: Bool = false) -> Data {
+    renderPixelExact(pixelSize: pixelSize, opaque: fullBleed) { ctx, size in
 
     // Squircle background, matching macOS's ~22.37%-of-edge corner radius convention.
-    let cornerRadius = size * 0.2237
+    let cornerRadius = fullBleed ? 0 : size * 0.2237
     let backgroundPath = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: size, height: size), xRadius: cornerRadius, yRadius: cornerRadius)
     ctx.saveGState()
     backgroundPath.addClip()
@@ -278,3 +295,29 @@ let menuBarContentsJSON = """
 """
 try! menuBarContentsJSON.write(to: menuBarIconDir.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
 print("wrote MenuBarIcon Contents.json")
+
+// MARK: - SpoolPad (iOS) app icon
+
+// iOS wants a single 1024pt universal icon: square and opaque, since the system masks
+// the corners itself.
+let padAssetsDir = repoRoot.appendingPathComponent("SpoolPad/Resources/Assets.xcassets")
+let padAppIconDir = padAssetsDir.appendingPathComponent("AppIcon.appiconset")
+try? FileManager.default.createDirectory(at: padAppIconDir, withIntermediateDirectories: true)
+try! drawAppIcon(pixelSize: 1024, fullBleed: true).write(to: padAppIconDir.appendingPathComponent("icon_1024.png"))
+print("wrote SpoolPad icon_1024.png (1024x1024)")
+
+let padAppIconContentsJSON = """
+{
+  "images" : [
+    { "filename" : "icon_1024.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}
+"""
+try! padAppIconContentsJSON.write(to: padAppIconDir.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+try! """
+{
+  "info" : { "author" : "xcode", "version" : 1 }
+}
+""".write(to: padAssetsDir.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+print("wrote SpoolPad AppIcon Contents.json")
