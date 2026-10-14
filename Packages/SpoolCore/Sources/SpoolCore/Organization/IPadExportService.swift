@@ -126,19 +126,22 @@ public enum IPadExportService {
             table: "file_gallery_images", from: source, to: destination
         )
 
-        let exported = try await source.read { conn in
+        // `Row` isn't `Sendable`, so convert to plain values inside the read closure.
+        let exported: [ExportedFile] = try await source.read { conn in
             try Row.fetchAll(conn, sql: """
                 SELECT DISTINCT f.id, f.path, f.thumbnail_path, p.name AS project_name
                 FROM files f
                 JOIN project_files pf ON pf.file_id = f.id
                 JOIN projects p ON p.id = pf.project_id
                 WHERE p.shared_with_ipad = 1 AND f.status = 'active'
-                """)
+                """).map { row in
+                ExportedFile(path: row["path"], thumbnailPath: row["thumbnail_path"], projectName: row["project_name"])
+            }
         }
 
-        for row in exported {
-            let sourcePath: String = row["path"]
-            let projectName: String = row["project_name"]
+        for file in exported {
+            let sourcePath = file.path
+            let projectName = file.projectName
             let projectDir = filesDir.appendingPathComponent(sanitizedFolderName(projectName), isDirectory: true)
             try fileManager.createDirectory(at: projectDir, withIntermediateDirectories: true)
             let sourceURL = URL(fileURLWithPath: sourcePath)
@@ -146,7 +149,7 @@ public enum IPadExportService {
             try? fileManager.removeItem(at: destURL)
             try? fileManager.copyItem(at: sourceURL, to: destURL)
 
-            if let thumbnailName = row["thumbnail_path"] as String? {
+            if let thumbnailName = file.thumbnailPath {
                 let thumbSourceURL = sourceThumbnailsDirectory.appendingPathComponent(thumbnailName)
                 let thumbDestURL = thumbnailsDir.appendingPathComponent(thumbnailName)
                 try? fileManager.removeItem(at: thumbDestURL)
@@ -156,6 +159,12 @@ public enum IPadExportService {
 
         let projectCount = try await destination.read { conn in try Int.fetchOne(conn, sql: "SELECT COUNT(*) FROM projects") ?? 0 }
         return Summary(projectCount: projectCount, fileCount: exported.count)
+    }
+
+    private struct ExportedFile: Sendable {
+        let path: String
+        let thumbnailPath: String?
+        let projectName: String
     }
 
     /// A fresh database file, full-rewrite each export — same schema/migrations as the
@@ -193,12 +202,13 @@ public enum IPadExportService {
     private static func copyRows(
         sql: String, table: String, from source: any DatabaseReader, to destination: any DatabaseWriter
     ) async throws {
-        let rows = try await source.read { conn in try Row.fetchAll(conn, sql: sql) }
-        guard let first = rows.first else { return }
-        let columns = Array(first.columnNames)
-        // `Row` isn't `Sendable`; extract plain `DatabaseValue`s (which are) before
-        // crossing into the `@Sendable` write closure below.
-        let allValues: [[DatabaseValue]] = rows.map { Array($0.databaseValues) }
+        // `Row` isn't `Sendable`; extract the column names and plain `DatabaseValue`s
+        // (which are) inside the read closure, before anything crosses an await.
+        let (columns, allValues): ([String], [[DatabaseValue]]) = try await source.read { conn in
+            let rows = try Row.fetchAll(conn, sql: sql)
+            return (rows.first.map { Array($0.columnNames) } ?? [], rows.map { Array($0.databaseValues) })
+        }
+        guard !columns.isEmpty else { return }
         let placeholders = columns.map { _ in "?" }.joined(separator: ", ")
         let insertSQL = "INSERT INTO \(table) (\(columns.joined(separator: ", "))) VALUES (\(placeholders))"
         try await destination.write { conn in

@@ -69,7 +69,19 @@ xcodebuild -project "Spool.xcodeproj" -scheme "Spool" -configuration Debug build
 # After editing project.yml:
 xcodegen generate
 xcodebuild -project "Spool.xcodeproj" -scheme "Spool" -configuration Debug build
+
+# iPad companion app (SpoolPad), on any iPad Simulator:
+xcodebuild -project "Spool.xcodeproj" -scheme "SpoolPad" -configuration Debug \
+    -destination 'platform=iOS Simulator,name=iPad Air 11-inch (M4)' build
 ```
+
+On the Mac mini the repo lives in iCloud Drive, which adds file attributes inside a
+package's `.build/` folder that make code signing fail ("resource fork, Finder
+information, or similar detritus not allowed"). Keep SwiftPM output out of iCloud:
+`swift test --scratch-path ~/Library/Caches/spool-swift-build/SpoolCore` (one folder per
+package). `xcodebuild` already writes to DerivedData, outside iCloud. STEP rendering needs
+`brew install opencascade`; without it, one SpoolCore test fails and STEP files show as
+unsupported.
 
 Established cadence for larger multi-file changes: run only the targeted `swift test` filter
 per change while iterating; save one full per-package `swift test` (no `--filter`) and one full
