@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/.claude/mini-host\" ] || [ \"$CLAUDE_HOST\" = mini ] || { echo \"⛔ This project is only edited on the Mac mini. Open it there via Remote Control in the Claude app (or run CLAUDE_HOST=mini claude to override).\" >&2; exit 2; }"
+          }
+        ]
+      }
+    ]
+  }
+}
