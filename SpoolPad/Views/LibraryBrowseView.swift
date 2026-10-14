@@ -26,7 +26,15 @@ struct LibraryBrowseView: View {
             libraryDetail
         }
         .refreshable { await refresh() }
-        .task { await refresh() }
+        .task {
+            // The first open of an iCloud folder usually has to wait for downloads, so
+            // keep checking for a while instead of making the user pull to refresh.
+            await refresh()
+            for _ in 0..<40 where libraryAccess.database == nil || viewModel.files.isEmpty {
+                try? await Task.sleep(for: .seconds(3))
+                await refresh()
+            }
+        }
         .onChange(of: viewModel.selection) { _, _ in Task { await viewModel.reloadFiles() } }
         .onChange(of: viewModel.searchQuery) { _, _ in Task { await viewModel.reloadFiles() } }
         .alert("Error", isPresented: Binding(
@@ -61,7 +69,7 @@ struct LibraryBrowseView: View {
                 ContentUnavailableView(
                     "Waiting for Your Library",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("Your Mac hasn't exported a shared library into this folder yet. Pull to check again.")
+                    description: Text("Waiting for your Mac's shared library to export into this folder and download from iCloud. This can take a minute. Pull to check again.")
                 )
             } else if viewModel.files.isEmpty {
                 ContentUnavailableView(

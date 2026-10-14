@@ -29,6 +29,11 @@ final class LibraryAccess: ObservableObject {
 
     /// Called with the URL from a `.fileImporter(allowedContentTypes: [.folder])` pick.
     func grantFolder(_ url: URL) {
+        // A picked URL is only reachable inside a start/stop access pair, and that
+        // includes creating its bookmark: without it iOS reports the folder as missing
+        // (NSCocoaErrorDomain 260).
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         do {
             let bookmarkData = try url.bookmarkData()
             UserDefaults.standard.set(bookmarkData, forKey: Self.bookmarkKey)
@@ -74,8 +79,30 @@ final class LibraryAccess: ObservableObject {
         stopAccessingIfNeeded()
         isAccessingSecurityScope = url.startAccessingSecurityScopedResource()
         folderURL = url
-        let dbPath = url.appendingPathComponent("library.sqlite").path
-        database = try? SQLiteSpoolDatabase.openReadOnly(path: dbPath)
+        requestICloudDownloads(in: url)
+        let dbURL = url.appendingPathComponent("library.sqlite")
+        database = FileManager.default.fileExists(atPath: dbURL.path)
+            ? try? SQLiteSpoolDatabase.openReadOnly(path: dbURL.path)
+            : nil
+    }
+
+    /// An iCloud Drive folder's files are often only placeholders on the iPad until
+    /// something asks for them, so ask for everything in the export (the database,
+    /// thumbnails and model copies). Downloads finish in the background; `reload()`
+    /// picks them up. Evicted files can show up either under their real name or as a
+    /// hidden `.<name>.icloud` placeholder, so both are handled.
+    private func requestICloudDownloads(in folder: URL) {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(at: folder, includingPropertiesForKeys: nil) else { return }
+        for case let item as URL in enumerator {
+            let name = item.lastPathComponent
+            var target = item
+            if name.hasPrefix("."), name.hasSuffix(".icloud") {
+                target = item.deletingLastPathComponent()
+                    .appendingPathComponent(String(name.dropFirst().dropLast(".icloud".count)))
+            }
+            try? fileManager.startDownloadingUbiquitousItem(at: target)
+        }
     }
 
     private func stopAccessingIfNeeded() {
