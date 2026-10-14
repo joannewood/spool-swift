@@ -36,11 +36,18 @@ struct FileDetailView: View {
                 Button {
                     showingSendToPrintQueue = true
                 } label: {
-                    Label("Send to Print Queue", systemImage: "printer")
+                    Label("Send to Print Queue", systemImage: "cube.fill")
                 }
                 ShareLink(item: localFileURL) {
                     Label("Print / Share", systemImage: "square.and.arrow.up")
                 }
+            } else if viewModel.isWaitingForFileDownload {
+                // Otherwise this looks like the feature's just missing, not pending —
+                // same class of problem as the library database's own iCloud-download
+                // lag (see LibraryBrowseView's retry loop and IPadExportService).
+                Label("Downloading file…", systemImage: "icloud.and.arrow.down")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption)
             }
         }
         .sheet(isPresented: $showingSendToPrintQueue) {
@@ -48,7 +55,16 @@ struct FileDetailView: View {
                 SendToPrintQueueView(file: file, localFileURL: localFileURL)
             }
         }
-        .task { await viewModel.load(file: file, database: libraryAccess.database, folderURL: libraryAccess.folderURL) }
+        .task {
+            await viewModel.load(file: file, database: libraryAccess.database, folderURL: libraryAccess.folderURL)
+            // The file's own copy can still be an undownloaded iCloud placeholder even
+            // after the library database itself is ready — keep checking for a while
+            // rather than permanently hiding the send action the first time it's missing.
+            for _ in 0..<20 where viewModel.localFileURL == nil {
+                try? await Task.sleep(for: .seconds(2))
+                await viewModel.load(file: file, database: libraryAccess.database, folderURL: libraryAccess.folderURL)
+            }
+        }
     }
 
     @ViewBuilder

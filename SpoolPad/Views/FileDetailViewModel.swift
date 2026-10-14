@@ -16,6 +16,12 @@ final class FileDetailViewModel: ObservableObject {
     /// copies as `Files/<sanitizedFolderName(project.name)>/<filename>`.
     @Published private(set) var localFileURL: URL?
 
+    /// True once we know the file genuinely belongs to a shared project (so a local
+    /// copy should eventually exist) but haven't found it on disk yet — distinct from
+    /// "this file was never exported at all," which `localFileURL` staying nil after
+    /// `projects` is non-empty and the retry loop in the view gives up would indicate.
+    var isWaitingForFileDownload: Bool { localFileURL == nil && !projects.isEmpty }
+
     func load(file: SpoolFile, database: SQLiteSpoolDatabase?, folderURL: URL?) async {
         guard let database, let fileId = file.id else { return }
         do {
