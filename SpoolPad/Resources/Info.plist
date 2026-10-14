@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sending a file to the Saddle & STEM print queue talks plain HTTP to a server on
+	     the local network (the Ranch machine's LAN address, or a classroom relay
+	     machine's) — never a fixed hostname, since those addresses come from DHCP.
+	     NSAllowsLocalNetworking scopes the ATS exception to private-network addresses
+	     only (RFC1918 ranges, .local, loopback); it does not permit plaintext HTTP to
+	     the open internet the way NSAllowsArbitraryLoads would. This key isn't
+	     expressible as a flat INFOPLIST_KEY_* build setting (see spool-swift's own
+	     CLAUDE.md on nested/uncommon Info.plist keys), hence this supplemental file. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- iOS 14+ gates any connection to a local-network address behind a one-time user
+	     permission prompt, independent of the ATS setting above. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>SpoolPad sends files to the Saddle &amp; STEM print queue on the Ranch's or your classroom's local network.</string>
+</dict>
+</plist>

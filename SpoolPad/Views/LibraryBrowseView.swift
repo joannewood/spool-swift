@@ -4,6 +4,7 @@ import SwiftUI
 struct LibraryBrowseView: View {
     @EnvironmentObject private var libraryAccess: LibraryAccess
     @StateObject private var viewModel = LibraryBrowseViewModel()
+    @State private var showingPrintQueueSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -22,6 +23,18 @@ struct LibraryBrowseView: View {
                 }
             }
             .navigationTitle("Spool")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingPrintQueueSettings = true
+                    } label: {
+                        Label("Print Queue Setup", systemImage: "printer")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingPrintQueueSettings) {
+                PrintQueueSettingsView()
+            }
         } detail: {
             libraryDetail
         }

@@ -9,6 +9,7 @@ struct FileDetailView: View {
     let file: SpoolFile
     @EnvironmentObject private var libraryAccess: LibraryAccess
     @StateObject private var viewModel = FileDetailViewModel()
+    @State private var showingSendToPrintQueue = false
 
     var body: some View {
         ScrollView {
@@ -32,9 +33,19 @@ struct FileDetailView: View {
         .navigationTitle(file.displayName ?? file.filename)
         .toolbar {
             if let localFileURL = viewModel.localFileURL {
+                Button {
+                    showingSendToPrintQueue = true
+                } label: {
+                    Label("Send to Print Queue", systemImage: "printer")
+                }
                 ShareLink(item: localFileURL) {
                     Label("Print / Share", systemImage: "square.and.arrow.up")
                 }
+            }
+        }
+        .sheet(isPresented: $showingSendToPrintQueue) {
+            if let localFileURL = viewModel.localFileURL {
+                SendToPrintQueueView(file: file, localFileURL: localFileURL)
             }
         }
         .task { await viewModel.load(file: file, database: libraryAccess.database, folderURL: libraryAccess.folderURL) }

@@ -78,7 +78,11 @@ targets:
     sources:
       - path: SpoolPad/App
       - path: SpoolPad/Views
-      - path: SpoolPad/Resources
+      # Not the whole Resources/ folder (that would sweep in Info.plist below as a
+      # copied resource, clashing with GENERATE_INFOPLIST_FILE's own output) — see
+      # SpoolApp's identical pattern just above for why Info.plist is referenced only
+      # via INFOPLIST_FILE, never as a source.
+      - path: SpoolPad/Resources/Assets.xcassets
     dependencies:
       # Not SpoolMesh/SpoolFS directly — SpoolMesh comes along transitively via
       # SpoolCore's own dependency (needed only to satisfy the module graph; its
@@ -96,6 +100,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: U8NA3U6GZF
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: SpoolPad/Resources/Info.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         # All four orientations: App Store Connect rejects iPad apps that support
         # multitasking without them.
