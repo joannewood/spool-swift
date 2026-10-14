@@ -43,7 +43,7 @@ public enum IPadExportService {
         try fileManager.createDirectory(at: thumbnailsDir, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: filesDir, withIntermediateDirectories: true)
 
-        let destination = try makeDestinationDatabase(at: destinationFolder)
+        let (destination, tempDatabaseURL) = try makeDestinationDatabase(at: destinationFolder)
 
         // Dependency order matters for FK-enforced tables in general, but
         // `files.active_gallery_image_id` and `file_gallery_images.file_id` form a
@@ -158,6 +158,40 @@ public enum IPadExportService {
         }
 
         let projectCount = try await destination.read { conn in try Int.fetchOne(conn, sql: "SELECT COUNT(*) FROM projects") ?? 0 }
+
+        // Atomically swap the finished, fully-populated database into place as the very
+        // last step — never delete-and-recreate `library.sqlite` at its real path
+        // directly (the previous approach). The iPad reads this same path at arbitrary
+        // times via iCloud sync, with no coordination with this export; an in-place
+        // delete+recreate left a real window where that read could hit a missing or
+        // half-written file ("disk I/O error", confirmed live on a real iPad). Building
+        // at a temp path first and using `replaceItemAt` means the iPad only ever sees
+        // either the old complete file or the new complete file, never neither.
+        let finalDatabaseURL = destinationFolder.appendingPathComponent("library.sqlite")
+        // Stale `-wal`/`-shm` siblings can only be left behind by a pre-fix export (this
+        // temp-file approach never produces its own, since the temp database forces
+        // `journal_mode = DELETE`) — harmless to leave, but clean them up if found.
+        for suffix in ["-wal", "-shm"] {
+            try? fileManager.removeItem(atPath: finalDatabaseURL.path + suffix)
+        }
+        // Deliberately the raw POSIX `rename()`, not `FileManager.replaceItemAt` — tried
+        // that first and it still reproduced the exact crash this fix exists for, in a
+        // controlled local test with no iCloud involved (confirmed via
+        // `reExportDoesNotBreakAnAlreadyOpenReader`). `replaceItemAt`'s "safe save"
+        // semantics don't guarantee a plain directory-entry swap the way `rename(2)`
+        // does — a reader that already has the old path open can still see its content
+        // change out from under it. Plain `rename()` only ever repoints the directory
+        // entry: an already-open reader keeps its old, still-valid file descriptor
+        // throughout, which is exactly the guarantee this needs.
+        let renameResult = tempDatabaseURL.path.withCString { tempPath in
+            finalDatabaseURL.path.withCString { finalPath in
+                rename(tempPath, finalPath)
+            }
+        }
+        guard renameResult == 0 else {
+            throw ExportError(message: "rename() failed swapping the export database into place: errno \(errno)")
+        }
+
         return Summary(projectCount: projectCount, fileCount: exported.count)
     }
 
@@ -170,26 +204,34 @@ public enum IPadExportService {
     /// A fresh database file, full-rewrite each export — same schema/migrations as the
     /// real library (so `SearchService`/models work against it unmodified), but with
     /// FK enforcement off for this write-only connection (see the cycle note above).
-    private static func makeDestinationDatabase(at destinationFolder: URL) throws -> any DatabaseWriter {
-        let dbURL = destinationFolder.appendingPathComponent("library.sqlite")
+    /// Builds into a fresh temp file, never the real `library.sqlite` path directly —
+    /// see the rename in `export()` for why. `journal_mode = DELETE` keeps everything in
+    /// that one file (no `-wal`/`-shm` siblings), so the final swap-into-place only ever
+    /// has to move a single file.
+    private static func makeDestinationDatabase(at destinationFolder: URL) throws -> (writer: any DatabaseWriter, tempURL: URL) {
         let fileManager = FileManager.default
-        for suffix in ["", "-wal", "-shm"] {
-            try? fileManager.removeItem(atPath: dbURL.path + suffix)
+        // Clean up any temp file left behind by an export that crashed before renaming.
+        if let existing = try? fileManager.contentsOfDirectory(at: destinationFolder, includingPropertiesForKeys: nil) {
+            for url in existing where url.lastPathComponent.hasPrefix(".library.sqlite.tmp-") {
+                try? fileManager.removeItem(at: url)
+            }
         }
+        let tempURL = destinationFolder.appendingPathComponent(".library.sqlite.tmp-\(UUID().uuidString)")
 
         var config = Configuration()
         config.foreignKeysEnabled = false
         config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA journal_mode = DELETE")
             db.add(function: DatabaseFunction("normalize", argumentCount: 1, pure: true) { values in
                 guard let text = String.fromDatabaseValue(values[0]) else { return nil }
                 return SpoolTextNormalization.normalize(text)
             })
         }
-        let destination = try DatabaseQueue(path: dbURL.path, configuration: config)
+        let destination = try DatabaseQueue(path: tempURL.path, configuration: config)
         var migrator = DatabaseMigrator()
         registerMigrations(&migrator)
         try migrator.migrate(destination)
-        return destination
+        return (destination, tempURL)
     }
 
     /// Generic fetch-then-insert copy between two independent connections (possibly to

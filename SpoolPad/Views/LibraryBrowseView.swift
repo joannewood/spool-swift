@@ -51,6 +51,10 @@ struct LibraryBrowseView: View {
         }
         .refreshable { await refresh() }
         .task {
+            viewModel.reopenDatabase = {
+                libraryAccess.reload()
+                return libraryAccess.database
+            }
             // The first open of an iCloud folder usually has to wait for downloads, so
             // keep checking for a while instead of making the user pull to refresh.
             await refresh()
