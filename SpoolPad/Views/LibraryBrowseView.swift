@@ -5,6 +5,7 @@ struct LibraryBrowseView: View {
     @EnvironmentObject private var libraryAccess: LibraryAccess
     @StateObject private var viewModel = LibraryBrowseViewModel()
     @State private var showingPrintQueueSettings = false
+    @State private var showingLibrarySettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -31,9 +32,19 @@ struct LibraryBrowseView: View {
                         Label("Print Queue Setup", systemImage: "printer")
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingLibrarySettings = true
+                    } label: {
+                        Label("Library Folder", systemImage: "folder.badge.gearshape")
+                    }
+                }
             }
             .sheet(isPresented: $showingPrintQueueSettings) {
                 PrintQueueSettingsView()
+            }
+            .sheet(isPresented: $showingLibrarySettings) {
+                LibrarySettingsView()
             }
         } detail: {
             libraryDetail
