@@ -95,7 +95,7 @@ targets:
         PRODUCT_NAME: SpoolPad
         PRODUCT_BUNDLE_IDENTIFIER: com.joannewood.SpoolPad
         MARKETING_VERSION: "0.5.0"
-        CURRENT_PROJECT_VERSION: "5"
+        CURRENT_PROJECT_VERSION: "6"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: U8NA3U6GZF
